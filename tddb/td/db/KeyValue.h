@@ -55,6 +55,8 @@ inline td::StringBuilder& operator<<(td::StringBuilder& sb, const UsageStats& st
   return sb;
 }
 
+enum class DbOpenMode { db_primary, db_secondary, db_readonly };
+
 class KeyValueReader {
  public:
   virtual ~KeyValueReader() = default;
