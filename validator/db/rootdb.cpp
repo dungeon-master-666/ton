@@ -20,6 +20,7 @@
 #include "td/actor/MultiPromise.h"
 #include "td/db/RocksDb.h"
 #include "td/utils/overloaded.h"
+#include "td/utils/port/path.h"
 #include "ton/ton-tl.hpp"
 #include "validator/fabric.h"
 #include "validator/stats-merger.h"
@@ -370,6 +371,25 @@ void RootDb::get_block_by_seqno(AccountIdPrefixFull account, BlockSeqno seqno, t
   td::actor::send_closure(archive_db_, &ArchiveManager::get_block_by_seqno, account, seqno, std::move(promise));
 }
 
+void RootDb::get_max_masterchain_seqno(td::Promise<BlockSeqno> promise) {
+  td::actor::send_closure(archive_db_, &ArchiveManager::get_max_masterchain_seqno, std::move(promise));
+}
+
+void RootDb::get_min_masterchain_seqno(td::Promise<BlockSeqno> promise) {
+  td::actor::send_closure(archive_db_, &ArchiveManager::get_min_masterchain_seqno, std::move(promise));
+}
+
+void RootDb::try_catch_up_with_primary(td::Promise<td::Unit> promise) {
+  CHECK(mode_ == td::DbOpenMode::db_secondary);
+  td::MultiPromise mp;
+  auto ig = mp.init_guard();
+  ig.add_promise(std::move(promise));
+
+  td::actor::send_closure(archive_db_, &ArchiveManager::try_catch_up_with_primary, ig.get_promise());
+  td::actor::send_closure(cell_db_, &CellDb::try_catch_up_with_primary, ig.get_promise());
+  td::actor::send_closure(state_db_, &StateDb::try_catch_up_with_primary, ig.get_promise());
+}
+
 void RootDb::update_init_masterchain_block(BlockIdExt block, td::Promise<td::Unit> promise) {
   td::actor::send_closure(state_db_, &StateDb::update_init_masterchain_block, block, std::move(promise));
 }
@@ -421,10 +441,15 @@ void RootDb::get_hardforks(td::Promise<std::vector<BlockIdExt>> promise) {
 }
 
 void RootDb::start_up() {
-  cell_db_ = td::actor::create_actor<CellDb>("celldb", actor_id(this), root_path_ + "/celldb/", opts_);
-  state_db_ = td::actor::create_actor<StateDb>("statedb", actor_id(this), root_path_ + "/state/");
+  if (mode_ == td::DbOpenMode::db_secondary) {
+    auto working_dir = opts_->get_secondary_working_dir();
+    CHECK(working_dir);
+    td::mkdir(working_dir.value()).ensure();
+  }
+  cell_db_ = td::actor::create_actor<CellDb>("celldb", actor_id(this), root_path_ + "/celldb/", opts_, mode_);
+  state_db_ = td::actor::create_actor<StateDb>("statedb", actor_id(this), root_path_ + "/state/", mode_);
   static_files_db_ = td::actor::create_actor<StaticFilesDb>("staticfilesdb", actor_id(this), root_path_ + "/static/");
-  archive_db_ = td::actor::create_actor<ArchiveManager>("archive", actor_id(this), root_path_, opts_);
+  archive_db_ = td::actor::create_actor<ArchiveManager>("archive", actor_id(this), root_path_, opts_, mode_);
 }
 
 void RootDb::archive(BlockHandle handle, td::Promise<td::Unit> promise) {
@@ -549,6 +574,7 @@ void RootDb::set_archive_current_shard_split_depth(td::uint32 value) {
 }
 
 void RootDb::run_gc(Ref<MasterchainState> shard_client_state, UnixTime gc_ts, double archive_ttl) {
+  CHECK(mode_ == td::DbOpenMode::db_primary);
   td::actor::send_closure(archive_db_, &ArchiveManager::run_gc, shard_client_state, gc_ts, archive_ttl);
 }
 
