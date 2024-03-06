@@ -71,8 +71,10 @@ class CellDbIn : public CellDbBase {
 
   void flush_db_stats();
 
+  void try_catch_up_with_primary(td::Promise<td::Unit> promise);
+
   CellDbIn(td::actor::ActorId<RootDb> root_db, td::actor::ActorId<CellDb> parent, std::string path,
-           td::Ref<ValidatorManagerOptions> opts);
+           td::Ref<ValidatorManagerOptions> opts, bool secondary = false);
 
   void start_up() override;
   void alarm() override;
@@ -124,6 +126,8 @@ class CellDbIn : public CellDbBase {
   td::Timestamp migrate_after_ = td::Timestamp::never();
   bool migration_active_ = false;
   std::optional<double> in_memory_load_time_;
+
+  bool secondary_;
 
   struct MigrationStats {
     td::Timer start_;
@@ -204,9 +208,10 @@ class CellDb : public CellDbBase {
     in_memory_boc_ = std::move(in_memory_boc);
   }
   void get_cell_db_reader(td::Promise<std::shared_ptr<vm::CellDbReader>> promise);
+  void try_catch_up_with_primary(td::Promise<td::Unit> promise);
 
-  CellDb(td::actor::ActorId<RootDb> root_db, std::string path, td::Ref<ValidatorManagerOptions> opts)
-      : root_db_(root_db), path_(path), opts_(opts) {
+  CellDb(td::actor::ActorId<RootDb> root_db, std::string path, td::Ref<ValidatorManagerOptions> opts, bool secondary = false)
+      : root_db_(root_db), path_(path), opts_(opts), secondary_(secondary) {
   }
 
   void start_up() override;
@@ -222,6 +227,8 @@ class CellDb : public CellDbBase {
   std::shared_ptr<const vm::DynamicBagOfCellsDb> in_memory_boc_;
   bool started_ = false;
   std::vector<std::pair<std::string, std::string>> prepared_stats_{{"started", "false"}};
+
+  bool secondary_;
 
   std::function<void(const vm::CellLoader::LoadResult&)> on_load_callback_;
 

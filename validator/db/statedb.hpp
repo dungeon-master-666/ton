@@ -53,10 +53,12 @@ class StateDb : public td::actor::Actor {
   void add_persistent_state_description(td::Ref<PersistentStateDescription> desc, td::Promise<td::Unit> promise);
   void get_persistent_state_descriptions(td::Promise<std::vector<td::Ref<PersistentStateDescription>>> promise);
 
-  StateDb(td::actor::ActorId<RootDb> root_db, std::string path);
+  StateDb(td::actor::ActorId<RootDb> root_db, std::string path, bool secondary = false);
 
   void start_up() override;
   void truncate(BlockSeqno masterchain_seqno, ConstBlockHandle handle, td::Promise<td::Unit> promise);
+
+  void try_catch_up_with_primary(td::Promise<td::Unit> promise);
 
  private:
   using KeyType = td::Bits256;
@@ -65,6 +67,7 @@ class StateDb : public td::actor::Actor {
 
   td::actor::ActorId<RootDb> root_db_;
   std::string db_path_;
+  bool secondary_;
 };
 
 }  // namespace validator

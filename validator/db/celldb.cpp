@@ -22,6 +22,7 @@
 #include "rootdb.hpp"
 
 #include "td/db/RocksDb.h"
+#include "td/db/RocksDbSecondary.h"
 #include "rocksdb/utilities/optimistic_transaction_db.h"
 
 #include "ton/ton-tl.hpp"
@@ -69,15 +70,18 @@ void CellDbBase::execute_sync(std::function<void()> f) {
 }
 
 CellDbIn::CellDbIn(td::actor::ActorId<RootDb> root_db, td::actor::ActorId<CellDb> parent, std::string path,
-                   td::Ref<ValidatorManagerOptions> opts)
-    : root_db_(root_db), parent_(parent), path_(std::move(path)), opts_(opts) {
+                   td::Ref<ValidatorManagerOptions> opts, bool secondary)
+    : root_db_(root_db), parent_(parent), path_(std::move(path)), opts_(opts), secondary_(secondary) {
 }
 
 void CellDbIn::start_up() {
   on_load_callback_ = [actor = std::make_shared<td::actor::ActorOwn<MigrationProxy>>(
                            td::actor::create_actor<MigrationProxy>("celldbmigration", actor_id(this))),
-                       compress_depth = opts_->get_celldb_compress_depth()](const vm::CellLoader::LoadResult& res) {
+                       compress_depth = opts_->get_celldb_compress_depth(), secondary = secondary_](const vm::CellLoader::LoadResult& res) {
     if (res.cell_.is_null()) {
+      return;
+    }
+    if (secondary) {
       return;
     }
     bool expected_stored_boc = res.cell_->get_depth() == compress_depth && compress_depth != 0;
@@ -116,9 +120,15 @@ void CellDbIn::start_up() {
     td::actor::send_closure(parent_, &CellDb::set_in_memory_boc, boc_);
   }
 
-  auto rocks_db = std::make_shared<td::RocksDb>(td::RocksDb::open(path_, std::move(db_options)).move_as_ok());
-  rocks_db_ = rocks_db->raw_db();
-  cell_db_ = std::move(rocks_db);
+  if (secondary_) {
+    auto rocks_db = std::make_shared<td::RocksDbSecondary>(td::RocksDbSecondary::open(path_, std::move(db_options)).move_as_ok());
+    rocks_db_ = rocks_db->raw_db();
+    cell_db_ = std::move(rocks_db);
+  } else {
+    auto rocks_db = std::make_shared<td::RocksDb>(td::RocksDb::open(path_, std::move(db_options)).move_as_ok());
+    rocks_db_ = rocks_db->raw_db();
+    cell_db_ = std::move(rocks_db);
+  }
   if (!opts_->get_celldb_in_memory()) {
     boc_ = vm::DynamicBagOfCellsDb::create();
     boc_->set_celldb_compress_depth(opts_->get_celldb_compress_depth());
@@ -158,6 +168,22 @@ void CellDbIn::start_up() {
         },
         td::Timestamp::now());
   }
+}
+
+void CellDbIn::try_catch_up_with_primary(td::Promise<td::Unit> promise) {
+  if (!secondary_) {
+    promise.set_error(td::Status::Error("it's not secondary db"));
+  }
+  auto secondary = std::static_pointer_cast<td::RocksDbSecondary>(cell_db_);
+  auto R = secondary->try_catch_up_with_primary();
+  if (R.is_error()) {
+    promise.set_error(R.move_as_error());
+  }
+
+  boc_->set_loader(std::make_unique<vm::CellLoader>(cell_db_->snapshot())).ensure();
+  td::actor::send_closure(parent_, &CellDb::update_snapshot, cell_db_->snapshot());
+
+  promise.set_result(td::Unit());
 }
 
 void CellDbIn::load_cell(RootHash hash, td::Promise<td::Ref<vm::DataCell>> promise) {
@@ -335,6 +361,9 @@ void CellDbIn::flush_db_stats() {
 }
 
 void CellDbIn::alarm() {
+  if (secondary_) {
+    return;
+  }
   if (statistics_flush_at_ && statistics_flush_at_.is_in_past()) {
     statistics_flush_at_ = td::Timestamp::in(60.0);
     flush_db_stats();
@@ -642,6 +671,7 @@ void CellDb::load_cell(RootHash hash, td::Promise<td::Ref<vm::DataCell>> promise
 }
 
 void CellDb::store_cell(BlockIdExt block_id, td::Ref<vm::Cell> cell, td::Promise<td::Ref<vm::DataCell>> promise) {
+  CHECK(!secondary_);
   td::actor::send_closure(cell_db_, &CellDbIn::store_cell, block_id, std::move(cell), std::move(promise));
 }
 
@@ -653,11 +683,14 @@ void CellDb::start_up() {
   CellDbBase::start_up();
   boc_ = vm::DynamicBagOfCellsDb::create();
   boc_->set_celldb_compress_depth(opts_->get_celldb_compress_depth());
-  cell_db_ = td::actor::create_actor<CellDbIn>("celldbin", root_db_, actor_id(this), path_, opts_);
+  cell_db_ = td::actor::create_actor<CellDbIn>("celldbin", root_db_, actor_id(this), path_, opts_, secondary_);
   on_load_callback_ = [actor = std::make_shared<td::actor::ActorOwn<CellDbIn::MigrationProxy>>(
                            td::actor::create_actor<CellDbIn::MigrationProxy>("celldbmigration", cell_db_.get())),
-                       compress_depth = opts_->get_celldb_compress_depth()](const vm::CellLoader::LoadResult& res) {
+                       compress_depth = opts_->get_celldb_compress_depth(), secondary = secondary_](const vm::CellLoader::LoadResult& res) {
     if (res.cell_.is_null()) {
+      return;
+    }
+    if (secondary) {
       return;
     }
     bool expected_stored_boc = res.cell_->get_depth() == compress_depth && compress_depth != 0;
@@ -666,6 +699,10 @@ void CellDb::start_up() {
                               td::Bits256{res.cell_->get_hash().bits()});
     }
   };
+}
+
+void CellDb::try_catch_up_with_primary(td::Promise<td::Unit> promise) {
+  td::actor::send_closure(cell_db_, &CellDbIn::try_catch_up_with_primary, std::move(promise));
 }
 
 CellDbIn::DbEntry::DbEntry(tl_object_ptr<ton_api::db_celldb_value> entry)

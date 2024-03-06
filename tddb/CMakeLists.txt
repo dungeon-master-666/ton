@@ -37,6 +37,9 @@ set(TDDB_SOURCE
 set(TDDB_ROCKSDB_SOURCE
   td/db/RocksDb.cpp
   td/db/RocksDb.h
+
+  td/db/RocksDbSecondary.cpp
+  td/db/RocksDbSecondary.h
 )
 
 set(TDDB_TEST_SOURCE

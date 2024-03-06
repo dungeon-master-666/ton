@@ -28,7 +28,7 @@ class RootDb;
 
 class ArchiveManager : public td::actor::Actor {
  public:
-  ArchiveManager(td::actor::ActorId<RootDb> root, std::string db_root, td::Ref<ValidatorManagerOptions> opts);
+  ArchiveManager(td::actor::ActorId<RootDb> root, std::string db_root, td::Ref<ValidatorManagerOptions> opts, bool secondary = false);
 
   void add_handle(BlockHandle handle, td::Promise<td::Unit> promise);
   void update_handle(BlockHandle handle, td::Promise<td::Unit> promise);
@@ -74,6 +74,10 @@ class ArchiveManager : public td::actor::Actor {
   void start_up() override;
   void alarm() override;
 
+  void try_catch_up_with_primary(td::Promise<td::Unit> promise);
+  td::Status catch_up_package(const PackageId& id);
+  void get_max_masterchain_seqno(td::Promise<BlockSeqno> promise);
+
   void commit_transaction();
   void set_async_mode(bool mode, td::Promise<td::Unit> promise);
 
@@ -94,6 +98,10 @@ class ArchiveManager : public td::actor::Actor {
       BlockSeqno seqno;
       UnixTime ts;
       LogicalTime lt;
+
+      bool operator==(const Desc& other) const {
+        return seqno == other.seqno && ts == other.ts && lt == other.lt;
+      }
     };
     FileDescription(PackageId id, bool deleted) : id(id), deleted(deleted) {
     }
@@ -173,6 +181,7 @@ class ArchiveManager : public td::actor::Actor {
     void shard_index_add(const FileDescription &desc);
     void shard_index_del(const FileDescription &desc);
   };
+  bool secondary_;
   FileMap files_, key_files_, temp_files_;
   td::actor::ActorOwn<ArchiveLru> archive_lru_;
   BlockSeqno finalized_up_to_{0};
