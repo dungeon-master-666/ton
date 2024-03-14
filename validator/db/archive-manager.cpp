@@ -20,8 +20,10 @@
 #include "td/actor/MultiPromise.h"
 #include "td/utils/overloaded.h"
 #include "files-async.hpp"
+#include "td/db/KeyValue.h"
 #include "td/db/RocksDb.h"
 #include "td/db/RocksDbSecondary.h"
+#include "td/db/RocksDbReadOnly.h"
 #include "common/delay.h"
 
 namespace ton {
@@ -57,8 +59,8 @@ std::string PackageId::name() const {
 }
 
 ArchiveManager::ArchiveManager(td::actor::ActorId<RootDb> root, std::string db_root,
-                               td::Ref<ValidatorManagerOptions> opts, bool secondary)
-    : db_root_(db_root), opts_(opts), secondary_(secondary) {
+                               td::Ref<ValidatorManagerOptions> opts, td::DbOpenMode mode)
+    : db_root_(db_root), opts_(opts), mode_(mode) {
 }
 
 void ArchiveManager::add_handle(BlockHandle handle, td::Promise<td::Unit> promise) {
@@ -626,7 +628,7 @@ void ArchiveManager::load_package(PackageId id) {
   }
 
   desc.file = td::actor::create_actor<ArchiveSlice>("slice", id.id, id.key, id.temp, false, 0, db_root_,
-                                                    archive_lru_.get(), statistics_, secondary_);
+                                                    archive_lru_.get(), statistics_, mode_);
 
   m.emplace(id, std::move(desc));
   update_permanent_slices();
@@ -662,7 +664,7 @@ const ArchiveManager::FileDescription *ArchiveManager::add_file_desc(ShardIdFull
   std::string prefix = PSTRING() << db_root_ << id.path() << id.name();
   new_desc.file = td::actor::create_actor<ArchiveSlice>("slice", id.id, id.key, id.temp, false,
                                                         id.key || id.temp ? 0 : cur_shard_split_depth_, db_root_,
-                                                        archive_lru_.get(), statistics_, secondary_);
+                                                        archive_lru_.get(), statistics_, mode_);
   const FileDescription &desc = f.emplace(id, std::move(new_desc));
   if (!id.temp) {
     update_desc(f, desc, shard, seqno, ts, lt);
@@ -860,10 +862,16 @@ void ArchiveManager::start_up() {
   }
   td::RocksDbOptions db_options;
   db_options.statistics = statistics_.rocksdb_statistics;
-  if (secondary_) {
-    index_ = std::static_pointer_cast<td::KeyValue>(std::make_shared<td::RocksDbSecondary>(td::RocksDbSecondary::open(db_root_ + "/files/globalindex", std::move(db_options)).move_as_ok()));
-  } else {
-    index_ = std::static_pointer_cast<td::KeyValue>(std::make_shared<td::RocksDb>(td::RocksDb::open(db_root_ + "/files/globalindex", std::move(db_options)).move_as_ok()));
+  switch (mode_) {
+    case td::DbOpenMode::db_primary:
+      index_ = std::static_pointer_cast<td::KeyValue>(std::make_shared<td::RocksDb>(td::RocksDb::open(db_root_ + "/files/globalindex", std::move(db_options)).move_as_ok()));
+      break;
+    case td::DbOpenMode::db_secondary:
+      index_ = std::static_pointer_cast<td::KeyValue>(std::make_shared<td::RocksDbSecondary>(td::RocksDbSecondary::open(db_root_ + "/files/globalindex", std::move(db_options)).move_as_ok()));
+      break;
+    case td::DbOpenMode::db_readonly:
+      index_ = std::static_pointer_cast<td::KeyValue>(std::make_shared<td::RocksDbReadOnly>(td::RocksDbReadOnly::open(db_root_ + "/files/globalindex", std::move(db_options)).move_as_ok()));
+      break;
   }
   std::string value;
   auto v = index_->get(create_serialize_tl_object<ton_api::db_files_index_key>().as_slice(), value);
@@ -917,7 +925,7 @@ void ArchiveManager::start_up() {
     }
   }).ensure();
 
-  if (!secondary_) {
+  if (mode_ == td::DbOpenMode::db_primary) {
     persistent_state_gc({0, FileHash::zero()});
   }
 
@@ -963,7 +971,7 @@ void ArchiveManager::alarm() {
 }
 
 void ArchiveManager::try_catch_up_with_primary(td::Promise<td::Unit> promise) {
-  CHECK(secondary_);
+  CHECK(mode_ == td::DbOpenMode::db_secondary);
 
   auto index_secondary = std::static_pointer_cast<td::RocksDbSecondary>(index_);
 
@@ -1061,7 +1069,7 @@ td::Status ArchiveManager::catch_up_package(const PackageId& id) {
 
 void ArchiveManager::get_max_masterchain_seqno(td::Promise<BlockSeqno> promise) {
   auto fd = get_file_desc_by_seqno(ton::AccountIdPrefixFull(ton::masterchainId, ton::shardIdAll), INT_MAX, false);
-  if (secondary_) {
+  if (mode_ == td::DbOpenMode::db_secondary) {
     auto R = td::PromiseCreator::lambda([SelfId = actor_id(this), promise = std::move(promise), fd = std::move(fd)](td::Result<td::Unit> R) mutable {
       if (R.is_error()) {
         promise.set_error(R.move_as_error());
@@ -1075,8 +1083,13 @@ void ArchiveManager::get_max_masterchain_seqno(td::Promise<BlockSeqno> promise) 
   }
 }
 
+void ArchiveManager::get_min_masterchain_seqno(td::Promise<BlockSeqno> promise) {
+  auto fd = get_file_map(PackageId{0, false, false}).get_next_file_desc(ShardIdFull(ton::masterchainId, ton::shardIdAll), nullptr);
+  td::actor::send_closure(fd->file, &ArchiveSlice::get_min_masterchain_seqno, std::move(promise));
+}
+
 void ArchiveManager::run_gc(UnixTime mc_ts, UnixTime gc_ts, UnixTime archive_ttl) {
-  CHECK(!secondary_);
+  CHECK(mode_ == td::DbOpenMode::db_primary);
   auto p = get_temp_package_id_by_unixtime(mc_ts - TEMP_PACKAGES_TTL);
   std::vector<PackageId> vec;
   for (auto &x : temp_files_) {
@@ -1317,7 +1330,7 @@ void ArchiveManager::set_async_mode(bool mode, td::Promise<td::Unit> promise) {
 }
 
 void ArchiveManager::truncate(BlockSeqno masterchain_seqno, ConstBlockHandle handle, td::Promise<td::Unit> promise) {
-  CHECK(!secondary_)
+  CHECK(mode_ == td::DbOpenMode::db_primary)
   index_->begin_transaction().ensure();
   td::MultiPromise mp;
   auto ig = mp.init_guard();

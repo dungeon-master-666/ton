@@ -36,8 +36,8 @@ class RootDb : public Db {
  public:
   enum class Flags : td::uint32 { f_started = 1, f_ready = 2, f_switched = 4, f_archived = 8 };
   RootDb(td::actor::ActorId<ValidatorManager> validator_manager, std::string root_path,
-         td::Ref<ValidatorManagerOptions> opts, bool secondary = false)
-      : validator_manager_(validator_manager), root_path_(std::move(root_path)), opts_(opts), secondary_(secondary) {
+         td::Ref<ValidatorManagerOptions> opts, td::DbOpenMode mode = td::DbOpenMode::db_primary)
+      : validator_manager_(validator_manager), root_path_(std::move(root_path)), opts_(opts), mode_(mode) {
   }
 
   void start_up() override;
@@ -140,6 +140,7 @@ class RootDb : public Db {
   void try_catch_up_with_primary(td::Promise<td::Unit> promise);
 
   void get_max_masterchain_seqno(td::Promise<BlockSeqno> promise);
+  void get_min_masterchain_seqno(td::Promise<BlockSeqno> promise);
 
   void run_gc(UnixTime mc_ts, UnixTime gc_ts, UnixTime archive_ttl) override;
   void add_persistent_state_description(td::Ref<PersistentStateDescription> desc, td::Promise<td::Unit> promise) override;
@@ -150,7 +151,7 @@ class RootDb : public Db {
   td::actor::ActorId<ValidatorManager> validator_manager_;
   std::string root_path_;
   td::Ref<ValidatorManagerOptions> opts_;
-  bool secondary_;
+  td::DbOpenMode mode_;
 
   td::actor::ActorOwn<CellDb> cell_db_;
   td::actor::ActorOwn<StateDb> state_db_;

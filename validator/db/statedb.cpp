@@ -21,6 +21,7 @@
 #include "adnl/utils.hpp"
 #include "td/db/RocksDb.h"
 #include "td/db/RocksDbSecondary.h"
+#include "td/db/RocksDbReadOnly.h"
 #include "ton/ton-shard.h"
 
 namespace ton {
@@ -218,14 +219,22 @@ void StateDb::get_hardforks(td::Promise<std::vector<BlockIdExt>> promise) {
   promise.set_value(std::move(vec));
 }
 
-StateDb::StateDb(td::actor::ActorId<RootDb> root_db, std::string db_path, bool secondary) : root_db_(root_db), db_path_(db_path), secondary_(secondary) {
+StateDb::StateDb(td::actor::ActorId<RootDb> root_db, std::string db_path, td::DbOpenMode mode) : root_db_(root_db), db_path_(db_path), mode_(mode) {
 }
 
 void StateDb::start_up() {
-  if (secondary_) {
-    kv_ = std::make_shared<td::RocksDbSecondary>(td::RocksDbSecondary::open(db_path_).move_as_ok());
-  } else {
-    kv_ = std::make_shared<td::RocksDb>(td::RocksDb::open(db_path_).move_as_ok());
+  switch (mode_) {
+    case td::DbOpenMode::db_primary:
+      kv_ = std::make_shared<td::RocksDb>(td::RocksDb::open(db_path_).move_as_ok());
+      break;
+    case td::DbOpenMode::db_secondary:
+      kv_ = std::make_shared<td::RocksDbSecondary>(td::RocksDbSecondary::open(db_path_).move_as_ok());
+      break;
+    case td::DbOpenMode::db_readonly:
+      kv_ = std::make_shared<td::RocksDbReadOnly>(td::RocksDbReadOnly::open(db_path_).move_as_ok());
+      break;
+    default:
+      UNREACHABLE();
   }
 
   std::string value;
@@ -341,6 +350,7 @@ void StateDb::get_persistent_state_descriptions(td::Promise<std::vector<td::Ref<
 }
 
 void StateDb::try_catch_up_with_primary(td::Promise<td::Unit> promise) {
+  CHECK(mode_ == td::DbOpenMode::db_secondary)
   auto secondary = dynamic_cast<td::RocksDbSecondary *>(kv_.get());
   if (secondary == nullptr) {
     promise.set_error(td::Status::Error("it's not secondary db"));
