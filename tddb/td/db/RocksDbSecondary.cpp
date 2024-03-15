@@ -66,7 +66,8 @@ Result<RocksDbSecondary> RocksDbSecondary::open(std::string path, RocksDbOptions
     }
 
     rocksdb::BlockBasedTableOptions table_options;
-    table_options.block_cache = options.block_cache;
+    // commenting this line because in recent rocksdb version it leads to NotFound error (file not in archive slice)
+    // table_options.block_cache = cache; 
     db_options.table_factory.reset(rocksdb::NewBlockBasedTableFactory(table_options));
 
     db_options.manual_wal_flush = true;
