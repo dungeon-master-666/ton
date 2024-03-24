@@ -987,7 +987,7 @@ BlockSeqno ArchiveSlice::min_masterchain_seqno() {
     return 0;
   }
 
-  auto first_idx = g->last_idx_ - 1;
+  auto first_idx = g->first_idx_;
   auto db_key = get_db_key_lt_el(ShardIdFull{masterchainId}, first_idx);
   F = kv_->get(db_key, value);
   F.ensure();
