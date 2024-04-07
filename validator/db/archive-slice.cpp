@@ -885,7 +885,7 @@ td::Result<ArchiveSlice::PackageInfo *> ArchiveSlice::choose_package(BlockSeqno 
 void ArchiveSlice::add_package(td::uint32 seqno, ShardIdFull shard_prefix, td::uint64 size, td::uint32 version) {
   PackageId p_id{seqno, key_blocks_only_, temp_};
   std::string path = PSTRING() << db_root_ << p_id.path() << get_package_file_name(p_id, shard_prefix);
-  auto R = Package::open(path, mode_ != td::DbOpenMode::db_primary, mode_ != td::DbOpenMode::db_primary);
+  auto R = Package::open(path, mode_ != td::DbOpenMode::db_primary, mode_ == td::DbOpenMode::db_primary);
   if (R.is_error()) {
     LOG(FATAL) << "failed to open/create archive '" << path << "': " << R.move_as_error();
     return;
