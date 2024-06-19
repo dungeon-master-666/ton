@@ -900,30 +900,32 @@ void ArchiveManager::start_up() {
     finalized_up_to_ = R.move_as_ok();
   }
 
-  td::WalkPath::run(db_root_ + "/archive/states/", [&](td::CSlice fname, td::WalkPath::Type t) -> void {
-    if (t == td::WalkPath::Type::NotDir) {
-      LOG(ERROR) << "checking file " << fname;
-      auto pos = fname.rfind(TD_DIR_SLASH);
-      if (pos != td::Slice::npos) {
-        fname.remove_prefix(pos + 1);
-      }
-      auto R = FileReferenceShort::create(fname.str());
-      if (R.is_error()) {
-        auto R2 = FileReference::create(fname.str());
-        if (R2.is_error()) {
-          LOG(ERROR) << "deleting bad state file '" << fname << "': " << R.move_as_error() << R2.move_as_error();
-          td::unlink(db_root_ + "/archive/states/" + fname.str()).ignore();
-          return;
+  if (mode_ == td::DbOpenMode::db_primary) {
+    td::WalkPath::run(db_root_ + "/archive/states/", [&](td::CSlice fname, td::WalkPath::Type t) -> void {
+      if (t == td::WalkPath::Type::NotDir) {
+        LOG(ERROR) << "checking file " << fname;
+        auto pos = fname.rfind(TD_DIR_SLASH);
+        if (pos != td::Slice::npos) {
+          fname.remove_prefix(pos + 1);
         }
-        auto d = R2.move_as_ok();
-        auto newfname = d.filename_short();
-        td::rename(db_root_ + "/archive/states/" + fname.str(), db_root_ + "/archive/states/" + newfname).ensure();
-        R = FileReferenceShort::create(newfname);
-        R.ensure();
+        auto R = FileReferenceShort::create(fname.str());
+        if (R.is_error()) {
+          auto R2 = FileReference::create(fname.str());
+          if (R2.is_error()) {
+            LOG(ERROR) << "deleting bad state file '" << fname << "': " << R.move_as_error() << R2.move_as_error();
+            td::unlink(db_root_ + "/archive/states/" + fname.str()).ignore();
+            return;
+          }
+          auto d = R2.move_as_ok();
+          auto newfname = d.filename_short();
+          td::rename(db_root_ + "/archive/states/" + fname.str(), db_root_ + "/archive/states/" + newfname).ensure();
+          R = FileReferenceShort::create(newfname);
+          R.ensure();
+        }
+        register_perm_state(R.move_as_ok());
       }
-      register_perm_state(R.move_as_ok());
-    }
-  }).ensure();
+    }).ensure();
+  }
 
   if (mode_ == td::DbOpenMode::db_primary) {
     persistent_state_gc({0, FileHash::zero()});
