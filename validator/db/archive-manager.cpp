@@ -1072,11 +1072,11 @@ td::Status ArchiveManager::catch_up_package(const PackageId& id) {
 void ArchiveManager::get_max_masterchain_seqno(td::Promise<BlockSeqno> promise) {
   auto fd = get_file_desc_by_seqno(ton::AccountIdPrefixFull(ton::masterchainId, ton::shardIdAll), INT_MAX, false);
   if (mode_ == td::DbOpenMode::db_secondary) {
-    auto R = td::PromiseCreator::lambda([SelfId = actor_id(this), promise = std::move(promise), fd = std::move(fd)](td::Result<td::Unit> R) mutable {
+    auto R = td::PromiseCreator::lambda([SelfId = actor_id(this), promise = std::move(promise), file = fd->file.get()](td::Result<td::Unit> R) mutable {
       if (R.is_error()) {
         promise.set_error(R.move_as_error());
       } else {
-        td::actor::send_closure(fd->file, &ArchiveSlice::get_max_masterchain_seqno, std::move(promise));
+        td::actor::send_closure(file, &ArchiveSlice::get_max_masterchain_seqno, std::move(promise));
       }
     });
     td::actor::send_closure(fd->file, &ArchiveSlice::try_catch_up_with_primary, std::move(R));
