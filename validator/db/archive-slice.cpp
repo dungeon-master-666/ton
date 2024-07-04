@@ -744,6 +744,7 @@ void ArchiveSlice::end_async_query() {
 
 td::Status ArchiveSlice::try_catch_up_with_primary() {
   CHECK(mode_ == td::DbOpenMode::db_secondary);
+  before_query();
 
   TRY_STATUS(static_cast<td::RocksDbSecondary *>(kv_.get())->try_catch_up_with_primary());
 
