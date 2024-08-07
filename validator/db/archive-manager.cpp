@@ -1059,15 +1059,13 @@ td::Status ArchiveManager::catch_up_package(const PackageId& id) {
     FileDescription desc{id, x->deleted_};
     desc.first_blocks = std::move(first_blocks);
     desc.file = std::move(it->second.file);
-    if (!desc.deleted) {
-      td::actor::send_closure(desc.file_actor_id(), &ArchiveSlice::try_catch_up_with_primary);
-    }
     map.erase(it);
     map.emplace(id, std::move(desc));
-  } else if (!it->second.deleted) {
-    td::actor::send_closure(it->second.file_actor_id(), &ArchiveSlice::try_catch_up_with_primary);
   }
-  
+
+  // probably we should also call ArchiveSlice::try_catch_up_with_primary for desc.file,
+  // but for now we do it in ArchiveManager::get_max_masterchain_seqno, since it's the only use case.
+
   return td::Status::OK();
 }
 
