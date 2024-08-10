@@ -611,7 +611,6 @@ void ArchiveSlice::before_query() {
       default:
         UNREACHABLE();
     }
-    kv_ = std::make_unique<td::RocksDb>(td::RocksDb::open(db_path_).move_as_ok());
     std::string value;
     auto R2 = kv_->get("status", value);
     R2.ensure();
