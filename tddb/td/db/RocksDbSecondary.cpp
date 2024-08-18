@@ -67,7 +67,7 @@ Result<RocksDbSecondary> RocksDbSecondary::open(std::string path, RocksDbOptions
 
     rocksdb::BlockBasedTableOptions table_options;
     // commenting this line because in recent rocksdb version it leads to NotFound error (file not in archive slice)
-    // table_options.block_cache = cache; 
+    // table_options.block_cache = options.block_cache; 
     db_options.table_factory.reset(rocksdb::NewBlockBasedTableFactory(table_options));
 
     db_options.manual_wal_flush = true;
@@ -77,7 +77,7 @@ Result<RocksDbSecondary> RocksDbSecondary::open(std::string path, RocksDbOptions
     db_options.bytes_per_sync = 1 << 20;
     db_options.writable_file_max_buffer_size = 2 << 14;
     db_options.keep_log_file_num = 1;
-    db_options.statistics = statistics;
+    db_options.statistics = options.statistics;
     rocksdb::ColumnFamilyOptions cf_options(db_options);
     std::vector<rocksdb::ColumnFamilyDescriptor> column_families;
     column_families.push_back(rocksdb::ColumnFamilyDescriptor(rocksdb::kDefaultColumnFamilyName, cf_options));

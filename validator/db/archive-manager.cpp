@@ -1058,7 +1058,11 @@ td::Status ArchiveManager::catch_up_package(const PackageId& id) {
   if (it->second.first_blocks != first_blocks || it->second.deleted != x->deleted_) {
     FileDescription desc{id, x->deleted_};
     desc.first_blocks = std::move(first_blocks);
-    desc.file = std::move(it->second.file);
+    if (x->deleted_) {
+      it->second.file.release();
+    } else {
+      desc.file = std::move(it->second.file);
+    }
     map.erase(it);
     map.emplace(id, std::move(desc));
   }

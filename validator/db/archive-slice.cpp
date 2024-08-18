@@ -930,9 +930,12 @@ void ArchiveSlice::destroy(td::Promise<td::Unit> promise) {
   before_query();
   destroyed_ = true;
 
-  for (auto &p : packages_) {
-    td::unlink(p.path).ensure();
+  if (mode_ == td::DbOpenMode::db_primary) {
+    for (auto &p : packages_) {
+      td::unlink(p.path).ensure();
+    }
   }
+  
   if (statistics_.pack_statistics) {
     statistics_.pack_statistics->record_close(packages_.size());
   }
@@ -940,9 +943,13 @@ void ArchiveSlice::destroy(td::Promise<td::Unit> promise) {
   id_to_package_.clear();
   kv_ = nullptr;
 
-  delay_action([name = db_path_, attempt = 0,
-                promise = std::move(promise)]() mutable { destroy_db(name, attempt, std::move(promise)); },
-               td::Timestamp::in(0.0));
+  if (mode_ == td::DbOpenMode::db_primary) {
+    delay_action([name = db_path_, attempt = 0,
+                  promise = std::move(promise)]() mutable { destroy_db(name, attempt, std::move(promise)); },
+                td::Timestamp::in(0.0));
+  } else {
+    promise.set_value(td::Unit());
+  }
 }
 
 BlockSeqno ArchiveSlice::max_masterchain_seqno() {

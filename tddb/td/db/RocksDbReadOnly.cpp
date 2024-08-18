@@ -55,8 +55,7 @@ RocksDbReadOnly RocksDbReadOnly::clone() const {
 }
 
 Result<RocksDbReadOnly> RocksDbReadOnly::open(std::string path, RocksDbOptions options) {
-rocksdb::DB *db;
-  auto statistics = rocksdb::CreateDBStatistics();
+  rocksdb::DB *db;
   {
     rocksdb::Options db_options;
 
@@ -76,7 +75,7 @@ rocksdb::DB *db;
     db_options.bytes_per_sync = 1 << 20;
     db_options.writable_file_max_buffer_size = 2 << 14;
     db_options.keep_log_file_num = 1;
-    db_options.statistics = statistics;
+    db_options.statistics = options.statistics;
     rocksdb::ColumnFamilyOptions cf_options(db_options);
     std::vector<rocksdb::ColumnFamilyDescriptor> column_families;
     column_families.push_back(rocksdb::ColumnFamilyDescriptor(rocksdb::kDefaultColumnFamilyName, cf_options));
