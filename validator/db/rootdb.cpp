@@ -23,6 +23,7 @@
 #include "td/db/RocksDb.h"
 #include "ton/ton-tl.hpp"
 #include "td/utils/overloaded.h"
+#include "td/utils/port/path.h"
 #include "common/checksum.h"
 #include "validator/stats-merger.h"
 #include "td/actor/MultiPromise.h"
@@ -454,6 +455,11 @@ void RootDb::get_hardforks(td::Promise<std::vector<BlockIdExt>> promise) {
 }
 
 void RootDb::start_up() {
+  if (mode_ == td::DbOpenMode::db_secondary) {
+    auto working_dir = opts_->get_secondary_working_dir();
+    CHECK(working_dir);
+    td::mkdir(working_dir.value()).ensure();
+  }
   cell_db_ = td::actor::create_actor<CellDb>("celldb", actor_id(this), root_path_ + "/celldb/", opts_, mode_);
   state_db_ = td::actor::create_actor<StateDb>("statedb", actor_id(this), root_path_ + "/state/", mode_);
   static_files_db_ = td::actor::create_actor<StaticFilesDb>("staticfilesdb", actor_id(this), root_path_ + "/static/");

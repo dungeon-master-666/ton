@@ -54,7 +54,7 @@ RocksDbSecondary RocksDbSecondary::clone() const {
   return RocksDbSecondary{db_, options_};
 }
 
-Result<RocksDbSecondary> RocksDbSecondary::open(std::string path, RocksDbOptions options) {
+Result<RocksDbSecondary> RocksDbSecondary::open(std::string path, RocksDbSecondaryOptions options) {
   rocksdb::DB *db;
   auto statistics = rocksdb::CreateDBStatistics();
   {
@@ -82,8 +82,10 @@ Result<RocksDbSecondary> RocksDbSecondary::open(std::string path, RocksDbOptions
     std::vector<rocksdb::ColumnFamilyDescriptor> column_families;
     column_families.push_back(rocksdb::ColumnFamilyDescriptor(rocksdb::kDefaultColumnFamilyName, cf_options));
     std::vector<rocksdb::ColumnFamilyHandle *> handles;
+    std::string secondary_path = path;
+    std::replace(secondary_path.begin(), secondary_path.end(), TD_DIR_SLASH, '_');
     TRY_STATUS(from_rocksdb(
-      rocksdb::DB::OpenAsSecondary(db_options, path, path + "/secondary", column_families, &handles, &db)));
+      rocksdb::DB::OpenAsSecondary(db_options, path, options.secondary_logs_path + TD_DIR_SLASH + secondary_path, column_families, &handles, &db)));
     CHECK(handles.size() == 1);
     // i can delete the handle since DBImpl is always holding a reference to
     // default column family
@@ -196,7 +198,7 @@ Status RocksDbSecondary::end_snapshot() {
   return td::Status::OK();
 }
 
-RocksDbSecondary::RocksDbSecondary(std::shared_ptr<rocksdb::DB> db, RocksDbOptions options)
+RocksDbSecondary::RocksDbSecondary(std::shared_ptr<rocksdb::DB> db, RocksDbSecondaryOptions options)
     : db_(std::move(db)), options_(std::move(options)) {
 }
 }  // namespace td

@@ -628,7 +628,7 @@ void ArchiveManager::load_package(PackageId id) {
   }
 
   desc.file = td::actor::create_actor<ArchiveSlice>("slice", id.id, id.key, id.temp, false, 0, db_root_,
-                                                    archive_lru_.get(), statistics_, mode_);
+                                                    archive_lru_.get(), statistics_, mode_, opts_->get_secondary_working_dir());
 
   m.emplace(id, std::move(desc));
   update_permanent_slices();
@@ -866,9 +866,13 @@ void ArchiveManager::start_up() {
     case td::DbOpenMode::db_primary:
       index_ = std::static_pointer_cast<td::KeyValue>(std::make_shared<td::RocksDb>(td::RocksDb::open(db_root_ + "/files/globalindex", std::move(db_options)).move_as_ok()));
       break;
-    case td::DbOpenMode::db_secondary:
-      index_ = std::static_pointer_cast<td::KeyValue>(std::make_shared<td::RocksDbSecondary>(td::RocksDbSecondary::open(db_root_ + "/files/globalindex", std::move(db_options)).move_as_ok()));
+    case td::DbOpenMode::db_secondary: {
+      auto secondary_working_dir = opts_->get_secondary_working_dir();
+      CHECK(secondary_working_dir);
+      td::RocksDbSecondaryOptions secondary_db_options{std::move(db_options), std::move(secondary_working_dir.value())};
+      index_ = std::static_pointer_cast<td::KeyValue>(std::make_shared<td::RocksDbSecondary>(td::RocksDbSecondary::open(db_root_ + "/files/globalindex", std::move(secondary_db_options)).move_as_ok()));
       break;
+    }
     case td::DbOpenMode::db_readonly:
       index_ = std::static_pointer_cast<td::KeyValue>(std::make_shared<td::RocksDbReadOnly>(td::RocksDbReadOnly::open(db_root_ + "/files/globalindex", std::move(db_options)).move_as_ok()));
       break;
@@ -957,8 +961,11 @@ void ArchiveManager::start_up() {
 void ArchiveManager::alarm() {
   alarm_timestamp() = td::Timestamp::in(60.0);
   auto stats = statistics_.to_string_and_reset();
-  auto to_file_r =
-      td::FileFd::open(db_root_ + "/db_stats.txt", td::FileFd::Truncate | td::FileFd::Create | td::FileFd::Write, 0644);
+  std::string stats_file = db_root_ + "/db_stats.txt";
+  if (mode_ == td::DbOpenMode::db_secondary) {
+    stats_file = opts_->get_secondary_working_dir().value() + "/db_stats.txt";
+  }
+  auto to_file_r = td::FileFd::open(stats_file, td::FileFd::Truncate | td::FileFd::Create | td::FileFd::Write, 0644);
   if (to_file_r.is_error()) {
     LOG(ERROR) << "Failed to open db_stats.txt: " << to_file_r.move_as_error();
     return;

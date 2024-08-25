@@ -31,11 +31,16 @@ class Statistics;
 }  // namespace rocksdb
 
 namespace td {
+
+struct RocksDbSecondaryOptions: public RocksDbOptions {
+  std::string secondary_logs_path;
+};
+
 class RocksDbSecondary : public KeyValue {
  public:
   static Status destroy(Slice path);
   RocksDbSecondary clone() const;
-  static Result<RocksDbSecondary> open(std::string path, RocksDbOptions options = {});
+  static Result<RocksDbSecondary> open(std::string path, RocksDbSecondaryOptions options = {});
 
   Status try_catch_up_with_primary();
 
@@ -69,7 +74,7 @@ class RocksDbSecondary : public KeyValue {
 
  private:
   std::shared_ptr<rocksdb::DB> db_;
-  RocksDbOptions options_;
+  RocksDbSecondaryOptions options_;
 
   class UnreachableDeleter {
    public:
@@ -80,6 +85,6 @@ class RocksDbSecondary : public KeyValue {
   };
   std::unique_ptr<const rocksdb::Snapshot, UnreachableDeleter> snapshot_;
 
-  explicit RocksDbSecondary(std::shared_ptr<rocksdb::DB> db, RocksDbOptions options);
+  explicit RocksDbSecondary(std::shared_ptr<rocksdb::DB> db, RocksDbSecondaryOptions options);
 };
 }  // namespace td
