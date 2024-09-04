@@ -999,10 +999,16 @@ void ArchiveManager::try_catch_up_with_primary(td::Promise<td::Unit> promise) {
   R.ensure();
   auto x = R.move_as_ok();
 
+  std::vector<PackageId> to_catch_up_deeply;
+
+  td::optional<PackageId> prev_package;
   for (auto &d : x->packages_) {
     auto id = PackageId{static_cast<td::uint32>(d), false, false};
     if (get_file_map(id).count(id) == 0) {
       load_package(id);
+      if (prev_package) {
+        to_catch_up_deeply.push_back(prev_package.value());
+      }
     } else {
       auto res = catch_up_package(id);
       if (res.is_error()) {
@@ -1010,11 +1016,17 @@ void ArchiveManager::try_catch_up_with_primary(td::Promise<td::Unit> promise) {
         return;
       }
     }
+    prev_package = id;
   }
+
+  prev_package = td::optional<PackageId>{};
   for (auto &d : x->key_packages_) {
     auto id = PackageId{static_cast<td::uint32>(d), true, false};
     if (get_file_map(id).count(id) == 0) {
       load_package(id);
+      if (prev_package) {
+        to_catch_up_deeply.push_back(prev_package.value());
+      }
     } else {
       auto res = catch_up_package(id);
       if (res.is_error()) {
@@ -1022,11 +1034,17 @@ void ArchiveManager::try_catch_up_with_primary(td::Promise<td::Unit> promise) {
         return;
       }
     }
+    prev_package = id;
   }
+
+  prev_package = td::optional<PackageId>{};
   for (auto &d : x->temp_packages_) {
     auto id = PackageId{static_cast<td::uint32>(d), false, true};
     if (get_file_map(id).count(id) == 0) {
       load_package(id);
+      if (prev_package) {
+        to_catch_up_deeply.push_back(prev_package.value());
+      }
     } else {
       auto res = catch_up_package(id);
       if (res.is_error()) {
@@ -1034,9 +1052,20 @@ void ArchiveManager::try_catch_up_with_primary(td::Promise<td::Unit> promise) {
         return;
       }
     }
+    prev_package = id;
   }
 
-  promise.set_result(td::Status::OK());
+  td::MultiPromise mp;
+  auto ig = mp.init_guard();
+  ig.add_promise(std::move(promise));
+
+  for (const auto id : to_catch_up_deeply) {
+    auto& map = get_file_map(id);
+    auto it = map.find(id);
+    if (it != map.end() && !it->second.deleted) {
+      td::actor::send_closure(it->second.file_actor_id(), &ArchiveSlice::try_catch_up_with_primary, ig.get_promise());
+    }
+  }
 }
 
 td::Status ArchiveManager::catch_up_package(const PackageId& id) {
