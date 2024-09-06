@@ -999,16 +999,10 @@ void ArchiveManager::try_catch_up_with_primary(td::Promise<td::Unit> promise) {
   R.ensure();
   auto x = R.move_as_ok();
 
-  std::vector<PackageId> to_catch_up_deeply;
-
-  td::optional<PackageId> prev_package;
   for (auto &d : x->packages_) {
     auto id = PackageId{static_cast<td::uint32>(d), false, false};
     if (get_file_map(id).count(id) == 0) {
       load_package(id);
-      if (prev_package) {
-        to_catch_up_deeply.push_back(prev_package.value());
-      }
     } else {
       auto res = catch_up_package(id);
       if (res.is_error()) {
@@ -1016,17 +1010,12 @@ void ArchiveManager::try_catch_up_with_primary(td::Promise<td::Unit> promise) {
         return;
       }
     }
-    prev_package = id;
   }
 
-  prev_package = td::optional<PackageId>{};
   for (auto &d : x->key_packages_) {
     auto id = PackageId{static_cast<td::uint32>(d), true, false};
     if (get_file_map(id).count(id) == 0) {
       load_package(id);
-      if (prev_package) {
-        to_catch_up_deeply.push_back(prev_package.value());
-      }
     } else {
       auto res = catch_up_package(id);
       if (res.is_error()) {
@@ -1034,17 +1023,12 @@ void ArchiveManager::try_catch_up_with_primary(td::Promise<td::Unit> promise) {
         return;
       }
     }
-    prev_package = id;
   }
 
-  prev_package = td::optional<PackageId>{};
   for (auto &d : x->temp_packages_) {
     auto id = PackageId{static_cast<td::uint32>(d), false, true};
     if (get_file_map(id).count(id) == 0) {
       load_package(id);
-      if (prev_package) {
-        to_catch_up_deeply.push_back(prev_package.value());
-      }
     } else {
       auto res = catch_up_package(id);
       if (res.is_error()) {
@@ -1052,20 +1036,8 @@ void ArchiveManager::try_catch_up_with_primary(td::Promise<td::Unit> promise) {
         return;
       }
     }
-    prev_package = id;
   }
-
-  td::MultiPromise mp;
-  auto ig = mp.init_guard();
-  ig.add_promise(std::move(promise));
-
-  for (const auto id : to_catch_up_deeply) {
-    auto& map = get_file_map(id);
-    auto it = map.find(id);
-    if (it != map.end() && !it->second.deleted) {
-      td::actor::send_closure(it->second.file_actor_id(), &ArchiveSlice::try_catch_up_with_primary, ig.get_promise());
-    }
-  }
+  promise.set_value(td::Unit());
 }
 
 td::Status ArchiveManager::catch_up_package(const PackageId& id) {
@@ -1103,26 +1075,12 @@ td::Status ArchiveManager::catch_up_package(const PackageId& id) {
     map.emplace(id, std::move(desc));
   }
 
-  // probably we should also call ArchiveSlice::try_catch_up_with_primary for desc.file,
-  // but for now we do it in ArchiveManager::get_max_masterchain_seqno, since it's the only use case.
-
   return td::Status::OK();
 }
 
 void ArchiveManager::get_max_masterchain_seqno(td::Promise<BlockSeqno> promise) {
   auto fd = get_file_desc_by_seqno(ton::AccountIdPrefixFull(ton::masterchainId, ton::shardIdAll), INT_MAX, false);
-  if (mode_ == td::DbOpenMode::db_secondary) {
-    auto R = td::PromiseCreator::lambda([SelfId = actor_id(this), promise = std::move(promise), file = fd->file.get()](td::Result<td::Unit> R) mutable {
-      if (R.is_error()) {
-        promise.set_error(R.move_as_error());
-      } else {
-        td::actor::send_closure(file, &ArchiveSlice::get_max_masterchain_seqno, std::move(promise));
-      }
-    });
-    td::actor::send_closure(fd->file, &ArchiveSlice::try_catch_up_with_primary, std::move(R));
-  } else {
-    td::actor::send_closure(fd->file, &ArchiveSlice::get_max_masterchain_seqno, std::move(promise));
-  }
+  td::actor::send_closure(fd->file, &ArchiveSlice::get_max_masterchain_seqno, std::move(promise));
 }
 
 void ArchiveManager::get_min_masterchain_seqno(td::Promise<BlockSeqno> promise) {
