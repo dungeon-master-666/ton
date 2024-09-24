@@ -898,7 +898,11 @@ void ArchiveSlice::add_package(td::uint32 seqno, ShardIdFull shard_prefix, td::u
   std::string path = PSTRING() << db_root_ << p_id.path() << get_package_file_name(p_id, shard_prefix);
   auto R = Package::open(path, mode_ != td::DbOpenMode::db_primary, mode_ == td::DbOpenMode::db_primary);
   if (R.is_error()) {
-    LOG(FATAL) << "failed to open/create archive '" << path << "': " << R.move_as_error();
+    if (mode_ == td::DbOpenMode::db_secondary) {
+      LOG(ERROR) << "failed to open/create archive '" << path << "': " << R.move_as_error();
+    } else {
+      LOG(FATAL) << "failed to open/create archive '" << path << "': " << R.move_as_error();
+    }
     return;
   }
   if (statistics_.pack_statistics) {
