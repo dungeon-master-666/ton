@@ -167,9 +167,9 @@ set(FULL_NODE_SOURCE
   net/get-next-key-blocks.cpp
 )
 
-add_library(validator STATIC ${VALIDATOR_SOURCE})
-add_library(validator-disk STATIC ${DISK_VALIDATOR_SOURCE})
-add_library(validator-hardfork STATIC ${HARDFORK_VALIDATOR_SOURCE})
+add_library(validator OBJECT ${VALIDATOR_SOURCE})
+add_library(validator-disk OBJECT ${DISK_VALIDATOR_SOURCE})
+add_library(validator-hardfork OBJECT ${HARDFORK_VALIDATOR_SOURCE})
 add_library(full-node STATIC ${FULL_NODE_SOURCE})
 
 target_include_directories(validator PUBLIC 
