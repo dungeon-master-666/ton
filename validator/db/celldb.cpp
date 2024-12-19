@@ -679,15 +679,19 @@ void CellDb::load_cell(RootHash hash, td::Promise<td::Ref<vm::DataCell>> promise
   if (!started_) {
     td::actor::send_closure(cell_db_, &CellDbIn::load_cell, hash, std::move(promise));
   } else {
-    auto P = td::PromiseCreator::lambda(
-        [cell_db_in = cell_db_.get(), hash, promise = std::move(promise)](td::Result<td::Ref<vm::DataCell>> R) mutable {
-          if (R.is_error()) {
-            td::actor::send_closure(cell_db_in, &CellDbIn::load_cell, hash, std::move(promise));
-          } else {
-            promise.set_result(R.move_as_ok());
-          }
-        });
-    boc_->load_cell_async(hash.as_slice(), async_executor, std::move(P));
+    // auto P = td::PromiseCreator::lambda(
+    //     [cell_db_in = cell_db_.get(), hash, promise = std::move(promise)](td::Result<td::Ref<vm::DataCell>> R) mutable {
+    //       if (R.is_error()) {
+    //         td::actor::send_closure(cell_db_in, &CellDbIn::load_cell, hash, std::move(promise));
+    //       } else {
+    //         promise.set_result(R.move_as_ok());
+    //       }
+    //     });
+    // boc_->load_cell_async(hash.as_slice(), async_executor, std::move(P));
+
+    // CellDbIn::load_cell causes segmentation fault in case of not found.
+    // This is workaround to avoid it.
+    boc_->load_cell_async(hash.as_slice(), async_executor, std::move(promise));
   }
 }
 
