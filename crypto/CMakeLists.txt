@@ -373,6 +373,10 @@ if (WINGETOPT_FOUND)
 endif()
 
 add_library(src_parser ${PARSER_SOURCE})
+if(APPLE)
+  target_link_options(src_parser PRIVATE -undefined dynamic_lookup)
+endif()
+
 target_include_directories(src_parser PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>)
 target_link_libraries(src_parser PUBLIC ton_crypto_core)
 
