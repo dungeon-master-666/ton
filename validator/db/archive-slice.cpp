@@ -698,10 +698,8 @@ void ArchiveSlice::before_query() {
                             packages_.size() + ESTIMATED_DB_OPEN_FILES);
   }
   if (mode_ == td::DbOpenMode::db_secondary) {
-    auto now = td::Timestamp::now();
-    if (now.at() - last_catch_up_.at() > 1.0) {
+    if (td::Timestamp::now().at() - last_catch_up_.at() > 1.0) {
       try_catch_up_with_primary().ensure();
-      last_catch_up_ = now;
     }
   }
 }
@@ -755,6 +753,10 @@ void ArchiveSlice::end_async_query() {
 td::Status ArchiveSlice::try_catch_up_with_primary() {
   CHECK(mode_ == td::DbOpenMode::db_secondary);
 
+  if (status_ == st_closed) {
+    return td::Status::Error(ErrorCode::notready, "archive slice is closed");
+  }
+
   TRY_STATUS(static_cast<td::RocksDbSecondary *>(kv_.get())->try_catch_up_with_primary());
 
   std::string value;
@@ -766,6 +768,7 @@ td::Status ArchiveSlice::try_catch_up_with_primary() {
       R2.ensure();
       auto tot = td::to_integer<td::uint32>(value);
       if (tot == packages_.size()) {
+        last_catch_up_ = td::Timestamp::now();
         return td::Status::OK();
       }
       R2 = kv_->get("slice_size", value);
@@ -799,6 +802,7 @@ td::Status ArchiveSlice::try_catch_up_with_primary() {
       }
     }
   }
+  last_catch_up_ = td::Timestamp::now();
   return td::Status::OK();
 }
 
