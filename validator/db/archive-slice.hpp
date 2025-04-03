@@ -140,6 +140,8 @@ class ArchiveSlice : public td::actor::Actor {
   td::Promise<T> begin_async_query(td::Promise<T> promise);
   void end_async_query();
 
+  td::Status try_catch_up_with_primary_impl();
+
   void begin_transaction();
   void commit_transaction();
 

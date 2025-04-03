@@ -699,7 +699,7 @@ void ArchiveSlice::before_query() {
   }
   if (mode_ == td::DbOpenMode::db_secondary) {
     if (td::Timestamp::now().at() - last_catch_up_.at() > 1.0) {
-      try_catch_up_with_primary().ensure();
+      try_catch_up_with_primary_impl().ensure();
     }
   }
 }
@@ -752,11 +752,16 @@ void ArchiveSlice::end_async_query() {
 
 td::Status ArchiveSlice::try_catch_up_with_primary() {
   CHECK(mode_ == td::DbOpenMode::db_secondary);
-
   if (status_ == st_closed) {
-    return td::Status::Error(ErrorCode::notready, "archive slice is closed");
+    before_query();
+  } else {
+    return try_catch_up_with_primary_impl();
   }
+}
 
+td::Status ArchiveSlice::try_catch_up_with_primary_impl() {
+  CHECK(mode_ == td::DbOpenMode::db_secondary);
+  
   TRY_STATUS(static_cast<td::RocksDbSecondary *>(kv_.get())->try_catch_up_with_primary());
 
   std::string value;
