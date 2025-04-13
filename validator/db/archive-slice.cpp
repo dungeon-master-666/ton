@@ -754,6 +754,7 @@ td::Status ArchiveSlice::try_catch_up_with_primary() {
   CHECK(mode_ == td::DbOpenMode::db_secondary);
   if (status_ == st_closed) {
     before_query();
+    return td::Status::OK();
   } else {
     return try_catch_up_with_primary_impl();
   }
