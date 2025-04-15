@@ -38,9 +38,12 @@ class RocksDbReadOnly : public KeyValue {
   static Result<RocksDbReadOnly> open(std::string path, RocksDbOptions options = {});
 
   Result<GetStatus> get(Slice key, std::string &value) override;
+  Result<std::vector<RocksDb::GetStatus>> get_multi(td::Span<Slice> keys, std::vector<std::string> *values) override;
   Status set(Slice key, Slice value) override;
   Status erase(Slice key) override;
   Result<size_t> count(Slice prefix) override;
+  Status for_each(std::function<Status(Slice, Slice)> f) override;
+  Status for_each_in_range(Slice begin, Slice end, std::function<Status(Slice, Slice)> f) override;
 
   Status begin_write_batch() override;
   Status commit_write_batch() override;

@@ -121,6 +121,38 @@ Result<RocksDbReadOnly::GetStatus> RocksDbReadOnly::get(Slice key, std::string &
   return from_rocksdb(status);
 }
 
+Result<std::vector<RocksDbReadOnly::GetStatus>> RocksDbReadOnly::get_multi(td::Span<Slice> keys, std::vector<std::string> *values) {
+  std::vector<rocksdb::Status> statuses(keys.size());
+  std::vector<rocksdb::Slice> keys_rocksdb;
+  keys_rocksdb.reserve(keys.size());
+  for (auto &key : keys) {
+    keys_rocksdb.push_back(to_rocksdb(key));
+  }
+  std::vector<rocksdb::PinnableSlice> values_rocksdb(keys.size());
+  rocksdb::ReadOptions options;
+  if (snapshot_) {
+    options.snapshot = snapshot_.get();
+    db_->MultiGet(options, db_->DefaultColumnFamily(), keys_rocksdb.size(), keys_rocksdb.data(), values_rocksdb.data(), statuses.data());
+  } else {
+    db_->MultiGet(options, db_->DefaultColumnFamily(), keys_rocksdb.size(), keys_rocksdb.data(), values_rocksdb.data(), statuses.data());
+  }
+  std::vector<GetStatus> res(statuses.size());
+  values->resize(statuses.size());
+  for (size_t i = 0; i < statuses.size(); i++) {
+    auto &status = statuses[i];
+    if (status.ok()) {
+      res[i] = GetStatus::Ok;
+      values->at(i) = values_rocksdb[i].ToString();
+    } else if (status.code() == rocksdb::Status::kNotFound) {
+      res[i] = GetStatus::NotFound;
+      values->at(i) = "";
+    } else {
+      return from_rocksdb(status);
+    }
+  }
+  return res;
+}
+
 Status RocksDbReadOnly::set(Slice key, Slice value) {
   CHECK(false)
 }
@@ -147,6 +179,48 @@ Result<size_t> RocksDbReadOnly::count(Slice prefix) {
     return from_rocksdb(iterator->status());
   }
   return res;
+}
+
+Status RocksDbReadOnly::for_each(std::function<Status(Slice, Slice)> f) {
+  rocksdb::ReadOptions options;
+  options.auto_prefix_mode = true;
+  options.snapshot = snapshot_.get();
+  std::unique_ptr<rocksdb::Iterator> iterator;
+  iterator.reset(db_->NewIterator(options));
+
+  iterator->SeekToFirst();
+  for (; iterator->Valid(); iterator->Next()) {
+    auto key = from_rocksdb(iterator->key());
+    auto value = from_rocksdb(iterator->value());
+    TRY_STATUS(f(key, value));
+  }
+  if (!iterator->status().ok()) {
+    return from_rocksdb(iterator->status());
+  }
+  return Status::OK();
+}
+
+Status RocksDbReadOnly::for_each_in_range(Slice begin, Slice end, std::function<Status(Slice, Slice)> f) {
+  rocksdb::ReadOptions options;
+  options.auto_prefix_mode = true;
+  options.snapshot = snapshot_.get();
+  std::unique_ptr<rocksdb::Iterator> iterator;
+  iterator.reset(db_->NewIterator(options));
+
+  auto comparator = rocksdb::BytewiseComparator();
+  iterator->Seek(to_rocksdb(begin));
+  for (; iterator->Valid(); iterator->Next()) {
+    auto key = from_rocksdb(iterator->key());
+    if (comparator->Compare(to_rocksdb(key), to_rocksdb(end)) >= 0) {
+      break;
+    }
+    auto value = from_rocksdb(iterator->value());
+    TRY_STATUS(f(key, value));
+  }
+  if (!iterator->status().ok()) {
+    return from_rocksdb(iterator->status());
+  }
+  return td::Status::OK();
 }
 
 Status RocksDbReadOnly::begin_write_batch() {

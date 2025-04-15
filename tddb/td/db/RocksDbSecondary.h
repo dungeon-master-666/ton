@@ -45,9 +45,12 @@ class RocksDbSecondary : public KeyValue {
   Status try_catch_up_with_primary();
 
   Result<GetStatus> get(Slice key, std::string &value) override;
+  Result<std::vector<RocksDb::GetStatus>> get_multi(td::Span<Slice> keys, std::vector<std::string> *values) override;
   Status set(Slice key, Slice value) override;
   Status erase(Slice key) override;
   Result<size_t> count(Slice prefix) override;
+  Status for_each(std::function<Status(Slice, Slice)> f) override;
+  Status for_each_in_range(Slice begin, Slice end, std::function<Status(Slice, Slice)> f) override;
 
   Status begin_write_batch() override;
   Status commit_write_batch() override;
@@ -83,7 +86,6 @@ class RocksDbSecondary : public KeyValue {
       UNREACHABLE();
     }
   };
-  std::unique_ptr<const rocksdb::Snapshot, UnreachableDeleter> snapshot_;
 
   explicit RocksDbSecondary(std::shared_ptr<rocksdb::DB> db, RocksDbSecondaryOptions options);
 };
