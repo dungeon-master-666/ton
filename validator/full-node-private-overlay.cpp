@@ -305,6 +305,14 @@ void FullNodeCustomOverlay::process_block_broadcast(PublicKeyHash src, ton_api::
   td::actor::send_closure(full_node_, &FullNode::process_block_broadcast, B.move_as_ok());
 }
 
+void FullNodeCustomOverlay::process_broadcast(PublicKeyHash src, ton_api::tonNode_newShardBlockBroadcast &query) {
+  BlockIdExt block_id = create_block_id(query.block_->block_);
+  LOG(ERROR) << "Received newShardBlockBroadcast in private overlay from " << src << ": "
+                        << block_id.to_str();
+  td::actor::send_closure(validator_manager_, &ValidatorManagerInterface::new_shard_block, block_id,
+                          query.block_->cc_seqno_, std::move(query.block_->data_));
+}
+
 void FullNodeCustomOverlay::process_broadcast(PublicKeyHash src, ton_api::tonNode_externalMessageBroadcast &query) {
   auto it = msg_senders_.find(adnl::AdnlNodeIdShort{src});
   if (it == msg_senders_.end()) {
