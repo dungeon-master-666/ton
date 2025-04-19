@@ -277,6 +277,7 @@ void ValidatorManagerImpl::new_ihr_message(td::BufferSlice data) {
 }
 
 void ValidatorManagerImpl::new_shard_block(BlockIdExt block_id, CatchainSeqno cc_seqno, td::BufferSlice data) {
+  LOG(ERROR) << "new_shard_block: " << block_id << " cc_seqno=" << cc_seqno;
   if (!last_masterchain_block_handle_) {
     shard_blocks_raw_.push_back(std::move(data));
     return;

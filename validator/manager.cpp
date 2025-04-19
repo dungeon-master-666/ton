@@ -1370,6 +1370,7 @@ void ValidatorManagerImpl::written_handle(BlockHandle handle, td::Promise<td::Un
 
 void ValidatorManagerImpl::new_block_cont(BlockHandle handle, td::Ref<ShardState> state,
                                           td::Promise<td::Unit> promise) {
+  LOG(ERROR) << "new_block_cont " << handle->id();
   if (state->get_shard().is_masterchain() && handle->id().id.seqno > last_masterchain_seqno_) {
     if (handle->id().id.seqno == last_masterchain_seqno_ + 1) {
       last_masterchain_seqno_ = handle->id().id.seqno;
@@ -1425,6 +1426,7 @@ void ValidatorManagerImpl::new_block_cont(BlockHandle handle, td::Ref<ShardState
 }
 
 void ValidatorManagerImpl::new_block(BlockHandle handle, td::Ref<ShardState> state, td::Promise<td::Unit> promise) {
+  LOG(ERROR) << "new_block " << handle->id() << " applied: " << handle->is_applied();
   if (handle->is_applied()) {
     return new_block_cont(std::move(handle), std::move(state), std::move(promise));
   } else {
@@ -1983,9 +1985,7 @@ void ValidatorManagerImpl::new_masterchain_block() {
                             last_masterchain_block_handle_, last_masterchain_state_);
   }
 
-  if (last_masterchain_seqno_ % 1024 == 0) {
-    LOG(WARNING) << "applied masterchain block " << last_masterchain_block_id_;
-  }
+  LOG(ERROR) << "applied masterchain block " << last_masterchain_block_id_;
 }
 
 void ValidatorManagerImpl::update_shard_overlays() {

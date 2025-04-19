@@ -557,13 +557,15 @@ void FullNodeImpl::send_validator_telemetry(PublicKeyHash key, tl_object_ptr<ton
 void FullNodeImpl::process_block_broadcast(BlockBroadcast broadcast) {
   send_block_broadcast_to_custom_overlays(broadcast);
   td::actor::send_closure(validator_manager_, &ValidatorManagerInterface::prevalidate_block, std::move(broadcast),
-                          [](td::Result<td::Unit> R) {
+                          [id = broadcast.block_id.id](td::Result<td::Unit> R) {
                             if (R.is_error()) {
                               if (R.error().code() == ErrorCode::notready) {
-                                LOG(DEBUG) << "dropped broadcast: " << R.move_as_error();
+                                LOG(ERROR) << "dropped broadcast: " << R.move_as_error();
                               } else {
-                                LOG(INFO) << "dropped broadcast: " << R.move_as_error();
+                                LOG(ERROR) << "dropped broadcast: " << R.move_as_error();
                               }
+                            } else {
+                              LOG(ERROR) << "prevalidate_block success " << id.to_str();
                             }
                           });
 }

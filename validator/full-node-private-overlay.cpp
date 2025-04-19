@@ -40,14 +40,14 @@ void FullNodePrivateBlockOverlay::process_block_broadcast(PublicKeyHash src, ton
     LOG(DEBUG) << "dropped broadcast: " << B.move_as_error();
     return;
   }
-  VLOG(FULL_NODE_DEBUG) << "Received block broadcast in private overlay from " << src << ": "
+  LOG(ERROR) << "Received block broadcast in private overlay from " << src << ": "
                         << B.ok().block_id.to_str();
   td::actor::send_closure(full_node_, &FullNode::process_block_broadcast, B.move_as_ok());
 }
 
 void FullNodePrivateBlockOverlay::process_broadcast(PublicKeyHash src, ton_api::tonNode_newShardBlockBroadcast &query) {
   BlockIdExt block_id = create_block_id(query.block_->block_);
-  VLOG(FULL_NODE_DEBUG) << "Received newShardBlockBroadcast in private overlay from " << src << ": "
+  LOG(ERROR) << "Received newShardBlockBroadcast in private overlay from " << src << ": "
                         << block_id.to_str();
   td::actor::send_closure(validator_manager_, &ValidatorManagerInterface::new_shard_block, block_id,
                           query.block_->cc_seqno_, std::move(query.block_->data_));
@@ -83,7 +83,7 @@ void FullNodePrivateBlockOverlay::process_block_candidate_broadcast(PublicKeyHas
     VLOG(FULL_NODE_WARNING) << "received block candidate with incorrect file hash from " << src;
     return;
   }
-  VLOG(FULL_NODE_DEBUG) << "Received newBlockCandidate in private overlay from " << src << ": " << block_id.to_str();
+  LOG(ERROR) << "Received newBlockCandidate in private overlay from " << src << ": " << block_id.to_str();
   td::actor::send_closure(full_node_, &FullNode::process_block_candidate_broadcast, block_id, cc_seqno,
                           validator_set_hash, std::move(data));
 }
