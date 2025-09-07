@@ -925,6 +925,7 @@ struct Bool final : TLB {
     return os << "Bool";
   }
   bool print_skip(PrettyPrinter& pp, vm::CellSlice& cs) const override;
+  bool print_skip(Printer& pp, vm::CellSlice& cs) const override;
 };
 
 extern const Bool t_Bool;
@@ -1010,6 +1011,7 @@ struct TupleT final : TLB_Complex {
     return 0;
   }
   bool print_skip(PrettyPrinter& pp, vm::CellSlice& cs) const override;
+  bool print_skip(Printer& pp, vm::CellSlice& cs) const override;
 };
 
 struct CondT final : TLB_Complex {
@@ -1225,6 +1227,9 @@ struct RefTo final : TLB {
   bool print_skip(PrettyPrinter& pp, vm::CellSlice& cs) const override {
     return pp.out("^") && ref_type.print_ref(pp, cs.fetch_ref());
   }
+  bool print_skip(Printer& pp, vm::CellSlice& cs) const override {
+    return pp.open() && pp.field("cell_reference") && ref_type.print_ref(pp, cs.fetch_ref()) && pp.close();
+  }
 };
 
 struct RefT final : TLB {
@@ -1245,6 +1250,9 @@ struct RefT final : TLB {
   }
   bool print_skip(PrettyPrinter& pp, vm::CellSlice& cs) const override {
     return pp.out("^") && X.print_ref(pp, cs.fetch_ref());
+  }
+  bool print_skip(Printer& pp, vm::CellSlice& cs) const override {
+    return pp.open() && pp.field("cell_reference") && X.print_ref(pp, cs.fetch_ref()) && pp.close();
   }
 };
 
