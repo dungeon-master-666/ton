@@ -1384,11 +1384,11 @@ struct ValidateStateInit : public ValidateState<ValidateStateInit> {
     return *this;
   }
   ValidateStateInit& expect_signed_A(bool x) {
-    expect_eq(rec.signed_A, x, "signed_A");
+    expect_eq(rec.signed_A!=0, x, "signed_A");
     return *this;
   }
   ValidateStateInit& expect_signed_B(bool x) {
-    expect_eq(rec.signed_B, x, "signed_B");
+    expect_eq(rec.signed_B!=0, x, "signed_B");
     return *this;
   }
 
@@ -1421,11 +1421,11 @@ struct ValidateStateClose : public ValidateState<ValidateStateClose> {
     return *this;
   }
   ValidateStateClose& expect_signed_A(bool x) {
-    expect_eq(rec.signed_A, x, "signed_A");
+    expect_eq(rec.signed_A!=0, x, "signed_A");
     return *this;
   }
   ValidateStateClose& expect_signed_B(bool x) {
-    expect_eq(rec.signed_B, x, "signed_B");
+    expect_eq(rec.signed_B!=0, x, "signed_B");
     return *this;
   }
 
