@@ -1399,6 +1399,8 @@ std::string compute_type_class_name(const Type* typ, int& fake_arg) {
     return "UInt";
   } else if (typ == Bits_type) {
     return "Bits";
+  } else if (typ == Text_type) {
+    return "Text";
   }
   return "<Unknown_Builtin_Type>";
 }
