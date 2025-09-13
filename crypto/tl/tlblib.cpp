@@ -18,6 +18,8 @@
 */
 #include <set>
 #include <tl/tlblib.hpp>
+#include "td/utils/base64.h"
+
 
 #include "vm/dict.h"
 
@@ -182,8 +184,8 @@ bool TLB::print_skip(PrettyPrinter& pp, vm::CellSlice& cs) const {
 bool TLB::print_skip(tlb::Printer& pp, vm::CellSlice& cs) const {
   auto boc = vm::std_boc_serialize(cs.get_base_cell());
   if (boc.is_ok()) {
-    auto hex = td::buffer_to_hex(boc.move_as_ok().as_slice());
-    return pp.out(hex);
+    auto b64str = td::base64_encode(boc.move_as_ok().as_slice());
+    return pp.out(b64str);
   } else {
     return pp.fail("failed to serialize cell");
   }
@@ -199,8 +201,8 @@ bool TLB::print_special(PrettyPrinter& pp, vm::CellSlice& cs) const {
 bool TLB::print_special(Printer& pp, vm::CellSlice& cs) const {
   auto boc = vm::std_boc_serialize(cs.get_base_cell());
   if (boc.is_ok()) {
-    auto hex = td::buffer_to_hex(boc.move_as_ok().as_slice());
-    return pp.out(hex);
+    auto b64str = td::base64_encode(boc.move_as_ok().as_slice());
+    return pp.out(b64str);
   } else {
     return pp.fail("failed to serialize cell");
   }
