@@ -552,6 +552,8 @@ public:
   virtual bool fetch_int256_field(vm::CellSlice& cs, int n, std::string name) = 0;
   virtual bool fetch_uint256_field(vm::CellSlice& cs, int n) = 0;
   virtual bool fetch_uint256_field(vm::CellSlice& cs, int n, std::string name) = 0;
+  virtual bool fetch_bool_field(vm::CellSlice& cs) = 0;
+  virtual bool fetch_bool_field(vm::CellSlice& cs, std::string name) = 0;
 
   virtual bool out(std::string str) = 0;
   virtual bool out_int(long long value) = 0;
@@ -647,6 +649,8 @@ struct PrettyPrinter : public Printer {
   bool fetch_int256_field(vm::CellSlice& cs, int n, std::string name) override;
   bool fetch_uint256_field(vm::CellSlice& cs, int n) override;
   bool fetch_uint256_field(vm::CellSlice& cs, int n, std::string name) override;
+  bool fetch_bool_field(vm::CellSlice& cs) override;
+  bool fetch_bool_field(vm::CellSlice& cs, std::string name) override;
   template <typename T>
   PrettyPrinter& operator<<(const T& value) {
     os << value;
@@ -696,6 +700,8 @@ public:
   bool fetch_int256_field(vm::CellSlice& cs, int n, std::string name) override;
   bool fetch_uint256_field(vm::CellSlice& cs, int n) override;
   bool fetch_uint256_field(vm::CellSlice& cs, int n, std::string name) override;
+  bool fetch_bool_field(vm::CellSlice& cs) override;
+  bool fetch_bool_field(vm::CellSlice& cs, std::string name) override;
 
   bool out(std::string str) override;
   bool out_int(long long value) override;
