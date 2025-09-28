@@ -737,6 +737,7 @@ bool JsonPrinter::field_uint(unsigned long long value, std::string name) {
 }
 
 bool JsonPrinter::fetch_bits_field(vm::CellSlice& cs, int n) {
+  if (!after_semicolon_) field("");
   after_semicolon_ = false;
   if (!cs.have(n)) return false;
   auto bits = cs.fetch_bits(n);
@@ -751,6 +752,7 @@ bool JsonPrinter::fetch_bits_field(vm::CellSlice& cs, int n, std::string name) {
 }
 
 bool JsonPrinter::fetch_int_field(vm::CellSlice& cs, int n) {
+  if (!after_semicolon_) field("");
   after_semicolon_ = false;
   if (!cs.have(n)) return false;
   long long value = cs.fetch_long(n);
@@ -764,6 +766,7 @@ bool JsonPrinter::fetch_int_field(vm::CellSlice& cs, int n, std::string name) {
 }
 
 bool JsonPrinter::fetch_uint_field(vm::CellSlice& cs, int n) {
+  if (!after_semicolon_) field("");
   after_semicolon_ = false;
   if (!cs.have(n)) return false;
   unsigned long long value = cs.fetch_ulong(n);
@@ -777,6 +780,7 @@ bool JsonPrinter::fetch_uint_field(vm::CellSlice& cs, int n, std::string name) {
 }
 
 bool JsonPrinter::fetch_int256_field(vm::CellSlice& cs, int n) {
+  if (!after_semicolon_) field("");
   after_semicolon_ = false;
   if (!cs.have(n)) return false;
   auto value = cs.prefetch_int256(n, true);
@@ -797,6 +801,7 @@ bool JsonPrinter::fetch_int256_field(vm::CellSlice& cs, int n, std::string name)
 }
 
 bool JsonPrinter::fetch_uint256_field(vm::CellSlice& cs, int n) {
+  if (!after_semicolon_) field("");
   after_semicolon_ = false;
   if (!cs.have(n)) return false;
   auto value = cs.prefetch_int256(n, false);
@@ -817,6 +822,7 @@ bool JsonPrinter::fetch_uint256_field(vm::CellSlice& cs, int n, std::string name
 }
 
 bool JsonPrinter::fetch_bool_field(vm::CellSlice& cs) {
+  if (!after_semicolon_) field("");
   after_semicolon_ = false;
   return cs.have(1) && out(cs.fetch_ulong(1) ? "true" : "false");
 }
