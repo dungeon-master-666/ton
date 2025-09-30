@@ -726,11 +726,7 @@ public:
   std::string get_json() const { return output_ ? *output_ : internal_buffer_; }
   bool write_raw(const std::string& json);
 
-  bool fail(std::string msg) override {
-    buffer() += "\"<FATAL: " + escape_string(msg) + ">\"";
-    failed_ = true;
-    return false;
-  }
+  bool fail(std::string msg) override;
 };
 
 bool print_hashmap(PrettyPrinter& pp, vm::CellSlice& cs, unsigned n, const TLB& dict_type, const TLB& value_type,
