@@ -240,6 +240,24 @@ std::string SnakeString::load_snake_string(vm::CellSlice& cs) const {
 }
 
 bool SnakeString::print_skip(PrettyPrinter& pp, vm::CellSlice& cs) const {
+  vm::CellSlice cs_copy = cs;
+  // fail if has more than 1 ref in chain
+  while (true) {
+    if (cs_copy.size_refs() > 1) {
+      return pp.fail("snake string cannot have more than one reference per cell");
+    }
+    if (cs_copy.size_refs() == 0) {
+      break;
+    }
+    auto ref = cs_copy.prefetch_ref();
+    if (ref.is_null()) {
+      return pp.fail("invalid reference in snake string");
+    }
+    if (!cs_copy.load(vm::NoVm{}, ref)) {
+      return pp.fail("failed to load reference in snake string");
+    }
+  }
+  
   auto text = load_snake_string(cs);
   if (text.empty() && cs.size() > 0) {
     return pp.fail("invalid snake text format");
@@ -267,6 +285,24 @@ bool SnakeString::print_skip(PrettyPrinter& pp, vm::CellSlice& cs) const {
 }
 
 bool SnakeString::print_skip(Printer& pp, vm::CellSlice& cs) const {
+  vm::CellSlice cs_copy = cs;
+  // fail if has more than 1 ref in chain
+  while (true) {
+    if (cs_copy.size_refs() > 1) {
+      return pp.fail("snake string cannot have more than one reference per cell");
+    }
+    if (cs_copy.size_refs() == 0) {
+      break;
+    }
+    auto ref = cs_copy.prefetch_ref();
+    if (ref.is_null()) {
+      return pp.fail("invalid reference in snake string");
+    }
+    if (!cs_copy.load(vm::NoVm{}, ref)) {
+      return pp.fail("failed to load reference in snake string");
+    }
+  }
+
   auto text = load_snake_string(cs);
   if (text.empty() && cs.size() > 0) {
     return pp.fail("invalid snake text format");
