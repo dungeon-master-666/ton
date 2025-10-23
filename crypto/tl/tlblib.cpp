@@ -18,6 +18,7 @@
 */
 #include <set>
 #include "td/utils/base64.h"
+#include "td/utils/utf8.h"
 #include "vm/cells/Cell.h"
 #include "vm/cells/CellBuilder.h"
 #include "tl/tlblib.hpp"
@@ -303,7 +304,11 @@ bool SnakeString::print_skip(JsonPrinter& pp, vm::CellSlice& cs) const {
   if (text_result.is_error()) {
     return pp.fail(text_result.error().message().str());
   }
-  return pp.out(text_result.move_as_ok());
+  auto str = text_result.move_as_ok();
+  if (!td::check_utf8(str)) {
+    return pp.fail("invalid utf-8 string");
+  }
+  return pp.out(str);
 }
 
 bool TupleT::skip(vm::CellSlice& cs) const {
