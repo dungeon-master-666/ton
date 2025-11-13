@@ -556,16 +556,6 @@ void ValidatorManagerImpl::add_shard_block_description(td::Ref<ShardTopBlockDesc
   for (auto &[_, actor] : shard_block_retainers_) {
     td::actor::send_closure(actor, &ShardBlockRetainer::new_shard_block_description, desc);
   }
-  if (!is_validator()) {
-    return;
-  }
-  auto it = shard_blocks_.find(ShardTopBlockDescriptionId{desc->shard(), desc->catchain_seqno()});
-  if (it != shard_blocks_.end() && desc->block_id().id.seqno <= it->second.latest_desc->block_id().id.seqno) {
-    VLOG(VALIDATOR_DEBUG) << "dropping duplicate shard block broadcast";
-    return;
-  }
-  shard_blocks_[ShardTopBlockDescriptionId{desc->block_id().shard_full(), desc->catchain_seqno()}].latest_desc = desc;
-  VLOG(VALIDATOR_DEBUG) << "new shard block descr for " << desc->block_id();
   if (need_monitor(desc->block_id().shard_full())) {
     auto P = td::PromiseCreator::lambda([](td::Result<td::Ref<ShardState>> R) {
       if (R.is_error()) {
@@ -579,6 +569,16 @@ void ValidatorManagerImpl::add_shard_block_description(td::Ref<ShardTopBlockDesc
     });
     wait_block_state_short(desc->block_id(), 0, td::Timestamp::in(60.0), true, std::move(P));
   }
+  if (!is_validator()) {
+    return;
+  }
+  auto it = shard_blocks_.find(ShardTopBlockDescriptionId{desc->shard(), desc->catchain_seqno()});
+  if (it != shard_blocks_.end() && desc->block_id().id.seqno <= it->second.latest_desc->block_id().id.seqno) {
+    VLOG(VALIDATOR_DEBUG) << "dropping duplicate shard block broadcast";
+    return;
+  }
+  shard_blocks_[ShardTopBlockDescriptionId{desc->block_id().shard_full(), desc->catchain_seqno()}].latest_desc = desc;
+  VLOG(VALIDATOR_DEBUG) << "new shard block descr for " << desc->block_id();
   if (validating_masterchain()) {
     td::MultiPromise mp;
     auto ig = mp.init_guard();
