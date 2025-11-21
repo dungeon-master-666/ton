@@ -24,6 +24,7 @@
 
 #include "archive-manager.hpp"
 #include "celldb.hpp"
+#include "db-events.h"
 #include "statedb.hpp"
 #include "staticfilesdb.hpp"
 #include "validator.h"
@@ -37,7 +38,10 @@ class RootDb : public Db {
   enum class Flags : td::uint32 { f_started = 1, f_ready = 2, f_switched = 4, f_archived = 8 };
   RootDb(td::actor::ActorId<ValidatorManager> validator_manager, std::string root_path,
          td::Ref<ValidatorManagerOptions> opts)
-      : validator_manager_(validator_manager), root_path_(std::move(root_path)), opts_(opts) {
+      : validator_manager_(validator_manager)
+      , root_path_(std::move(root_path))
+      , opts_(opts)
+      , db_event_publisher_(get_db_events_fifo_path(root_path_)) {
   }
 
   void start_up() override;
@@ -150,6 +154,9 @@ class RootDb : public Db {
   void iterate_temp_block_handles(std::function<void(const BlockHandleInterface &)> f) override;
 
  private:
+  void publish_block_written(BlockIdExt block_id);
+  void publish_candidate_stored(PublicKey source, BlockIdExt block_id, FileHash collated_data_hash);
+
   td::actor::ActorId<ValidatorManager> validator_manager_;
   std::string root_path_;
   td::Ref<ValidatorManagerOptions> opts_;
@@ -159,6 +166,7 @@ class RootDb : public Db {
   td::actor::ActorOwn<StaticFilesDb> static_files_db_;
   td::actor::ActorOwn<ArchiveManager> archive_db_;
 
+  DbEventPublisher db_event_publisher_;
   std::map<BlockIdExt, std::vector<td::Promise<td::Unit>>> archive_block_waiters_;
 };
 

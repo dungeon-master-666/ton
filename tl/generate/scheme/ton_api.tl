@@ -560,6 +560,9 @@ db.blockdb.key.value id:tonNode.blockIdExt = db.blockdb.Key;
 db.candidate source:PublicKey id:tonNode.blockIdExt data:bytes collated_data:bytes = db.Candidate;
 db.candidate.id source:PublicKey id:tonNode.blockIdExt collated_data_file_hash:int256 = db.candidate.Id; 
 
+db.event.blockWritten block_id:tonNode.blockIdExt = db.Event;
+db.event.candidateStored source:PublicKey block_id:tonNode.blockIdExt collated_data_hash:int256 = db.Event;
+
 db.filedb.key.empty = db.filedb.Key;
 db.filedb.key.blockFile block_id:tonNode.blockIdExt = db.filedb.Key; 
 db.filedb.key.zeroStateFile block_id:tonNode.blockIdExt = db.filedb.Key; 

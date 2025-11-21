@@ -98,7 +98,7 @@ Result<RocksDb> RocksDb::open(std::string path, RocksDbOptions options) {
 
   db_options.wal_recovery_mode = rocksdb::WALRecoveryMode::kTolerateCorruptedTailRecords;
   db_options.use_direct_reads = options.use_direct_reads;
-  db_options.manual_wal_flush = true;
+  // db_options.manual_wal_flush = true;
   db_options.create_if_missing = true;
   db_options.max_background_compactions = 4;
   db_options.max_background_flushes = 2;
@@ -230,7 +230,12 @@ Status RocksDb::set(Slice key, Slice value) {
   if (transaction_) {
     return from_rocksdb(transaction_->Put(to_rocksdb(key), to_rocksdb(value)));
   }
-  return from_rocksdb(db_->Put({}, to_rocksdb(key), to_rocksdb(value)));
+  auto res = from_rocksdb(db_->Put({}, to_rocksdb(key), to_rocksdb(value)));
+  if (res.is_error()) {
+    return res;
+  }
+  res = from_rocksdb(db_->FlushWAL(true /* wait */));
+  return res;
 }
 Status RocksDb::merge(Slice key, Slice value) {
   if (write_batch_) {
@@ -358,13 +363,23 @@ Status RocksDb::commit_write_batch() {
   auto write_batch = std::move(write_batch_);
   rocksdb::WriteOptions options;
   options.sync = true;
-  return from_rocksdb(db_->Write(options, write_batch.get()));
+  auto res = from_rocksdb(db_->Write(options, write_batch.get()));
+  if (res.is_error()) {
+    return res;
+  }
+  res = from_rocksdb(db_->FlushWAL(true /* wait */));
+  return res;
 }
 
 Status RocksDb::commit_transaction() {
   CHECK(transaction_);
   auto transaction = std::move(transaction_);
-  return from_rocksdb(transaction->Commit());
+  auto res= from_rocksdb(transaction->Commit());
+  if (res.is_error()) {
+    return res;
+  }
+  res = from_rocksdb(db_->FlushWAL(true /* wait */));
+  return res;
 }
 
 Status RocksDb::abort_write_batch() {

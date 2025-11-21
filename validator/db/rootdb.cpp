@@ -182,12 +182,18 @@ void RootDb::store_block_candidate(BlockCandidate candidate, td::Promise<td::Uni
       source.tl(), create_tl_block_id(candidate.id), std::move(candidate.data), std::move(candidate.collated_data));
   auto P = td::PromiseCreator::lambda(
       [archive_db = archive_db_.get(), promise = std::move(promise), block_id = candidate.id, source,
-       collated_file_hash = candidate.collated_file_hash](td::Result<td::Unit> R) mutable {
+       collated_file_hash = candidate.collated_file_hash, SelfId = actor_id(this)](td::Result<td::Unit> R) mutable {
         TRY_RESULT_PROMISE(promise, _, std::move(R));
+        auto final_promise = td::PromiseCreator::lambda(
+            [SelfId, promise = std::move(promise), source, block_id, collated_file_hash](td::Result<td::Unit> R) mutable {
+              TRY_RESULT_PROMISE(promise, _, std::move(R));
+              td::actor::send_closure(SelfId, &RootDb::publish_candidate_stored, source, block_id, collated_file_hash);
+              promise.set_value(td::Unit());
+            });
         td::actor::send_closure(archive_db, &ArchiveManager::add_temp_file_short, fileref::CandidateRef{block_id},
                                 create_serialize_tl_object<ton_api::db_candidate_id>(
                                     source.tl(), create_tl_block_id(block_id), collated_file_hash),
-                                std::move(promise));
+                                std::move(final_promise));
       });
   td::actor::send_closure(archive_db_, &ArchiveManager::add_temp_file_short,
                           fileref::Candidate{source, candidate.id, candidate.collated_file_hash}, std::move(obj),
@@ -234,21 +240,23 @@ void RootDb::store_block_state(BlockHandle handle, td::Ref<ShardState> state,
   }
   if (!handle->inited_state_boc()) {
     auto P = td::PromiseCreator::lambda([b = archive_db_.get(), root_hash = state->root_hash(), handle,
-                                         promise = std::move(promise)](td::Result<td::Ref<vm::DataCell>> R) mutable {
+                                         promise = std::move(promise), SelfId = actor_id(this)](td::Result<td::Ref<vm::DataCell>> R) mutable {
       if (R.is_error()) {
         promise.set_error(R.move_as_error());
       } else {
         handle->set_state_root_hash(root_hash);
         handle->set_state_boc();
 
-        auto S = create_shard_state(handle->id(), R.move_as_ok());
+        auto block_id = handle->id();
+        auto S = create_shard_state(block_id, R.move_as_ok());
         S.ensure();
 
-        auto P = td::PromiseCreator::lambda(
-            [promise = std::move(promise), state = S.move_as_ok()](td::Result<td::Unit> R) mutable {
-              R.ensure();
-              promise.set_value(std::move(state));
-            });
+        auto P = td::PromiseCreator::lambda([SelfId, block_id, promise = std::move(promise),
+                                             state = S.move_as_ok()](td::Result<td::Unit> R) mutable {
+          R.ensure();
+          td::actor::send_closure(SelfId, &RootDb::publish_block_written, block_id);
+          promise.set_value(std::move(state));
+        });
 
         td::actor::send_closure(b, &ArchiveManager::update_handle, std::move(handle), std::move(P));
       }
@@ -270,19 +278,21 @@ void RootDb::store_block_state_from_data(BlockHandle handle, td::Ref<BlockData> 
     return;
   }
   auto P = td::PromiseCreator::lambda(
-      [b = archive_db_.get(), handle, promise = std::move(promise)](td::Result<td::Ref<vm::DataCell>> R) mutable {
+      [b = archive_db_.get(), handle, promise = std::move(promise), SelfId = actor_id(this)](td::Result<td::Ref<vm::DataCell>> R) mutable {
         TRY_RESULT_PROMISE(promise, root, std::move(R));
         handle->set_state_root_hash(root->get_hash().bits());
         handle->set_state_boc();
 
-        auto S = create_shard_state(handle->id(), std::move(root));
+        auto block_id = handle->id();
+        auto S = create_shard_state(block_id, std::move(root));
         S.ensure();
 
-        auto P = td::PromiseCreator::lambda(
-            [promise = std::move(promise), state = S.move_as_ok()](td::Result<td::Unit> R) mutable {
-              R.ensure();
-              promise.set_value(std::move(state));
-            });
+        auto P = td::PromiseCreator::lambda([SelfId, block_id, promise = std::move(promise),
+                                             state = S.move_as_ok()](td::Result<td::Unit> R) mutable {
+          R.ensure();
+          td::actor::send_closure(SelfId, &RootDb::publish_block_written, block_id);
+          promise.set_value(std::move(state));
+        });
 
         td::actor::send_closure(b, &ArchiveManager::update_handle, std::move(handle), std::move(P));
       });
@@ -292,6 +302,17 @@ void RootDb::store_block_state_from_data(BlockHandle handle, td::Ref<BlockData> 
 void RootDb::store_block_state_from_data_preliminary(std::vector<td::Ref<BlockData>> blocks,
                                                      td::Promise<td::Unit> promise) {
   td::actor::send_closure(cell_db_, &CellDb::store_block_state_permanent_bulk, std::move(blocks), std::move(promise));
+}
+
+void RootDb::publish_block_written(BlockIdExt block_id) {
+  auto event = create_serialize_tl_object<ton_api::db_event_blockWritten>(create_tl_block_id(block_id));
+  db_event_publisher_.publish(event.as_slice());
+}
+
+void RootDb::publish_candidate_stored(PublicKey source, BlockIdExt block_id, FileHash collated_data_hash) {
+  auto event = create_serialize_tl_object<ton_api::db_event_candidateStored>(source.tl(), create_tl_block_id(block_id),
+                                                                             collated_data_hash);
+  db_event_publisher_.publish(event.as_slice());
 }
 
 void RootDb::get_block_state(ConstBlockHandle handle, td::Promise<td::Ref<ShardState>> promise) {
