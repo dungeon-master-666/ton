@@ -1081,6 +1081,11 @@ void ArchiveManager::try_catch_up_with_primary(td::Promise<td::Unit> promise) {
   R.ensure();
   auto x = R.move_as_ok();
 
+  td::MultiPromise mp;
+  auto ig = mp.init_guard();
+  ig.add_promise(std::move(promise));
+  auto promise2 = ig.get_promise();
+  
   for (auto &d : x->packages_) {
     auto id = PackageId{static_cast<td::uint32>(d), false, false};
     if (get_file_map(id).count(id) == 0) {
@@ -1088,9 +1093,19 @@ void ArchiveManager::try_catch_up_with_primary(td::Promise<td::Unit> promise) {
     } else {
       auto res = catch_up_package(id);
       if (res.is_error()) {
-        promise.set_error(std::move(res));
+        promise2.set_error(std::move(res));
         return;
       }
+    }
+    // catch up last package to sync latest blocks
+    if (d == x->packages_.back()) {
+      auto P = td::PromiseCreator::lambda([id, promise = ig.get_promise()](td::Result<td::Unit> R) mutable {
+        if (R.is_error()) {
+          LOG(ERROR) << "Failed to catch up last archive slice " << id.path();
+        }
+        promise.set_result(std::move(R));
+      });
+      td::actor::send_closure(get_file_map(id).find(id)->second.file_actor_id(), &ArchiveSlice::try_catch_up_with_primary, std::move(P));
     }
   }
 
@@ -1101,7 +1116,7 @@ void ArchiveManager::try_catch_up_with_primary(td::Promise<td::Unit> promise) {
     } else {
       auto res = catch_up_package(id);
       if (res.is_error()) {
-        promise.set_error(std::move(res));
+        promise2.set_error(std::move(res));
         return;
       }
     }
@@ -1114,12 +1129,12 @@ void ArchiveManager::try_catch_up_with_primary(td::Promise<td::Unit> promise) {
     } else {
       auto res = catch_up_package(id);
       if (res.is_error()) {
-        promise.set_error(std::move(res));
+        promise2.set_error(std::move(res));
         return;
       }
     }
   }
-  promise.set_value(td::Unit());
+  promise2.set_value(td::Unit());
 }
 
 td::Status ArchiveManager::catch_up_package(const PackageId& id) {
