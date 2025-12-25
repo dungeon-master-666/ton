@@ -1099,13 +1099,17 @@ void ArchiveManager::try_catch_up_with_primary(td::Promise<td::Unit> promise) {
     }
     // catch up last package to sync latest blocks
     if (d == x->packages_.back()) {
+      auto actor_id = get_file_map(id).find(id)->second.file_actor_id();
+      if (actor_id.empty()) {
+        continue;
+      }
       auto P = td::PromiseCreator::lambda([id, promise = ig.get_promise()](td::Result<td::Unit> R) mutable {
         if (R.is_error()) {
           LOG(ERROR) << "Failed to catch up last archive slice " << id.path();
         }
         promise.set_result(std::move(R));
       });
-      td::actor::send_closure(get_file_map(id).find(id)->second.file_actor_id(), &ArchiveSlice::try_catch_up_with_primary, std::move(P));
+      td::actor::send_closure(actor_id, &ArchiveSlice::try_catch_up_with_primary, std::move(P));
     }
   }
 
@@ -1136,13 +1140,17 @@ void ArchiveManager::try_catch_up_with_primary(td::Promise<td::Unit> promise) {
 
     // catch up last temp package to sync latest blocks
     if (d == x->temp_packages_.back()) {
+      auto actor_id = get_file_map(id).find(id)->second.file_actor_id();
+      if (actor_id.empty()) {
+        continue;
+      }
       auto P = td::PromiseCreator::lambda([id, promise = ig.get_promise()](td::Result<td::Unit> R) mutable {
         if (R.is_error()) {
           LOG(ERROR) << "Failed to catch up last archive slice " << id.path();
         }
         promise.set_result(std::move(R));
       });
-      td::actor::send_closure(get_file_map(id).find(id)->second.file_actor_id(), &ArchiveSlice::try_catch_up_with_primary, std::move(P));
+      td::actor::send_closure(actor_id, &ArchiveSlice::try_catch_up_with_primary, std::move(P));
     }
   }
   promise2.set_value(td::Unit());
