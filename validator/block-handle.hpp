@@ -297,7 +297,7 @@ struct BlockHandleImpl : public BlockHandleInterface {
   UnixTime unix_time() const override {
     // CHECK(inited_unix_time());
     if (!inited_unix_time()) {
-      return UnixTime::zero();
+      return 0;
     }
     return ts_;
   }
