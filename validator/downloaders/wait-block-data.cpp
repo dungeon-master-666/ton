@@ -31,14 +31,16 @@ namespace ton {
 namespace validator {
 
 void WaitBlockData::alarm() {
+  LOG(WARNING) << "block_flow wait_data alarm block_id=" << handle_->id().to_str();
   abort_query(td::Status::Error(ErrorCode::timeout, "timeout"));
 }
 
 void WaitBlockData::abort_query(td::Status reason) {
+  LOG(WARNING) << "block_flow wait_data abort block_id=" << handle_->id().to_str() << " reason=" << reason;
   if (promise_) {
     if (priority_ > 0 || (reason.code() != ErrorCode::timeout && reason.code() != ErrorCode::notready)) {
-      LOG(WARNING) << "aborting wait block data query for " << handle_->id() << " priority=" << priority_ << ": "
-                   << reason;
+      LOG(WARNING) << "aborting wait block data query for " << handle_->id().to_str() << " priority=" << priority_
+                   << ": " << reason;
     } else {
       LOG(DEBUG) << "aborting wait block data query for " << handle_->id() << " priority=" << priority_ << ": "
                  << reason;
@@ -49,6 +51,8 @@ void WaitBlockData::abort_query(td::Status reason) {
 }
 
 void WaitBlockData::finish_query() {
+  LOG(WARNING) << "block_flow wait_data finish block_id=" << handle_->id().to_str()
+               << " unix_time=" << handle_->unix_time();
   CHECK(handle_->received());
   if (promise_) {
     promise_.set_result(data_);
@@ -60,6 +64,8 @@ void WaitBlockData::start_up() {
   alarm_timestamp() = timeout_;
 
   CHECK(handle_);
+  LOG(WARNING) << "block_flow wait_data start_up block_id=" << handle_->id().to_str()
+               << " unix_time=" << handle_->unix_time();
   if (!handle_->id().is_masterchain()) {
     start();
   } else {
@@ -74,15 +80,21 @@ void WaitBlockData::start_up() {
 
 void WaitBlockData::set_is_hardfork(bool value) {
   is_hardfork_ = value;
+  LOG(WARNING) << "block_flow wait_data set_is_hardfork block_id=" << handle_->id().to_str()
+               << " is_hardfork=" << is_hardfork_;
   start();
 }
 
 void WaitBlockData::start() {
   if (reading_from_db_) {
+    LOG(WARNING) << "block_flow wait_data start already_reading block_id=" << handle_->id().to_str();
     return;
   }
+  LOG(WARNING) << "block_flow wait_data start block_id=" << handle_->id().to_str()
+               << " unix_time=" << handle_->unix_time() << " priority=" << priority_;
   if (handle_->received() &&
       (handle_->id().is_masterchain() ? handle_->inited_proof() : handle_->inited_proof_link())) {
+    LOG(WARNING) << "block_flow wait_data read_from_db block_id=" << handle_->id().to_str();
     reading_from_db_ = true;
 
     auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<td::Ref<BlockData>> R) {
@@ -95,6 +107,7 @@ void WaitBlockData::start() {
 
     td::actor::send_closure(manager_, &ValidatorManager::get_block_data_from_db, handle_, std::move(P));
   } else if (try_read_static_file_.is_in_past() && (is_hardfork_ || !handle_->id().is_masterchain())) {
+    LOG(WARNING) << "block_flow wait_data try_static_file block_id=" << handle_->id().to_str();
     try_read_static_file_ = td::Timestamp::in(30.0);
 
     auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<td::BufferSlice> R) {
@@ -107,6 +120,7 @@ void WaitBlockData::start() {
 
     td::actor::send_closure(manager_, &ValidatorManager::try_get_static_file, handle_->id().file_hash, std::move(P));
   } else if (try_get_candidate_ && !handle_->id().is_masterchain()) {
+    LOG(WARNING) << "block_flow wait_data try_candidate_cache block_id=" << handle_->id().to_str();
     try_get_candidate_ = false;
     td::actor::send_closure(manager_, &ValidatorManager::get_candidate_data_by_block_id_from_db, handle_->id(),
                             [SelfId = actor_id(this), id = handle_->id()](td::Result<td::BufferSlice> R) {
@@ -118,6 +132,7 @@ void WaitBlockData::start() {
                               }
                             });
   } else {
+    LOG(WARNING) << "block_flow wait_data request_from_net block_id=" << handle_->id().to_str();
     auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<ReceivedBlock> R) {
       if (R.is_error()) {
         td::actor::send_closure(SelfId, &WaitBlockData::failed_to_get_block_data_from_net,
@@ -133,15 +148,19 @@ void WaitBlockData::start() {
 }
 
 void WaitBlockData::got_block_data_from_db(td::Ref<BlockData> data) {
+  LOG(WARNING) << "block_flow wait_data got_from_db block_id=" << handle_->id().to_str()
+               << " unix_time=" << handle_->unix_time();
   data_ = std::move(data);
   finish_query();
 }
 
 void WaitBlockData::failed_to_get_block_data_from_net(td::Status reason) {
+  LOG(WARNING) << "block_flow wait_data failed_from_net block_id=" << handle_->id().to_str()
+               << " reason=" << reason;
   if (reason.code() == ErrorCode::notready) {
     LOG(DEBUG) << "failed to get block " << handle_->id() << " data from net: " << reason;
   } else {
-    LOG(WARNING) << "failed to get block " << handle_->id() << " data from net: " << reason;
+    LOG(WARNING) << "failed to get block " << handle_->id().to_str() << " data from net: " << reason;
   }
 
   delay_action([SelfId = actor_id(this)]() mutable { td::actor::send_closure(SelfId, &WaitBlockData::start); },
@@ -149,6 +168,7 @@ void WaitBlockData::failed_to_get_block_data_from_net(td::Status reason) {
 }
 
 void WaitBlockData::loaded_data(ReceivedBlock block) {
+  LOG(WARNING) << "block_flow wait_data loaded_data block_id=" << block.id.to_str();
   auto X = create_block(std::move(block));
   if (X.is_error()) {
     failed_to_get_block_data_from_net(X.move_as_error_prefix("bad block from net: "));
@@ -158,6 +178,8 @@ void WaitBlockData::loaded_data(ReceivedBlock block) {
 }
 
 void WaitBlockData::loaded_block_data(td::Ref<BlockData> block) {
+  LOG(WARNING) << "block_flow wait_data loaded_block_data block_id=" << handle_->id().to_str()
+               << " unix_time=" << handle_->unix_time();
   if (data_.not_null()) {
     return;
   }
@@ -191,6 +213,8 @@ void WaitBlockData::loaded_block_data(td::Ref<BlockData> block) {
 }
 
 void WaitBlockData::checked_proof_link() {
+  LOG(WARNING) << "block_flow wait_data checked_proof_link block_id=" << handle_->id().to_str()
+               << " unix_time=" << handle_->unix_time();
   CHECK(handle_->id().is_masterchain() ? handle_->inited_proof() : handle_->inited_proof_link());
   if (!handle_->received()) {
     auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<td::Unit> R) {
@@ -213,6 +237,8 @@ void WaitBlockData::force_read_from_db() {
   }
   CHECK(handle_->id().is_masterchain() ? handle_->inited_proof() : handle_->inited_proof_link());
   CHECK(handle_->received());
+  LOG(WARNING) << "block_flow wait_data force_read_from_db block_id=" << handle_->id().to_str()
+               << " unix_time=" << handle_->unix_time();
   reading_from_db_ = true;
 
   auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<td::Ref<BlockData>> R) {
@@ -227,6 +253,8 @@ void WaitBlockData::force_read_from_db() {
 }
 
 void WaitBlockData::got_static_file(td::BufferSlice data) {
+  LOG(WARNING) << "block_flow wait_data got_static_file block_id=" << handle_->id().to_str()
+               << " unix_time=" << handle_->unix_time();
   CHECK(td::sha256_bits256(data.as_slice()) == handle_->id().file_hash);
 
   auto R = create_block(handle_->id(), std::move(data));

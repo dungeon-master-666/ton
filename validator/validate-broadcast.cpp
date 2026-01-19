@@ -28,6 +28,8 @@ namespace ton {
 namespace validator {
 
 void ValidateBroadcast::abort_query(td::Status reason) {
+  LOG(WARNING) << "block_flow validate_broadcast abort block_id=" << broadcast_.block_id.to_str()
+               << " reason=" << reason;
   if (promise_) {
     VLOG(VALIDATOR_WARNING) << "aborting validate broadcast query for " << broadcast_.block_id.to_str() << ": "
                             << reason;
@@ -37,6 +39,7 @@ void ValidateBroadcast::abort_query(td::Status reason) {
 }
 
 void ValidateBroadcast::finish_query() {
+  LOG(WARNING) << "block_flow validate_broadcast finish block_id=" << broadcast_.block_id.to_str();
   if (promise_) {
     VLOG(VALIDATOR_DEBUG) << "validated broadcast for " << broadcast_.block_id.to_str() << " in "
                           << perf_timer_.elapsed() << " s";
@@ -46,10 +49,14 @@ void ValidateBroadcast::finish_query() {
 }
 
 void ValidateBroadcast::alarm() {
+  LOG(WARNING) << "block_flow validate_broadcast alarm block_id=" << broadcast_.block_id.to_str();
   abort_query(td::Status::Error(ErrorCode::timeout, "timeout"));
 }
 
 void ValidateBroadcast::start_up() {
+  LOG(WARNING) << "block_flow validate_broadcast start block_id=" << broadcast_.block_id.to_str()
+               << " last_mc_seqno=" << last_masterchain_state_->get_seqno()
+               << " last_key_block_seqno=" << last_known_masterchain_block_handle_->id().seqno();
   VLOG(VALIDATOR_DEBUG) << "received broadcast for " << broadcast_.block_id.to_str()
                         << " : last_mc_seqno=" << last_masterchain_state_->get_seqno()
                         << " last_key_block_seqno=" << last_known_masterchain_block_handle_->id().seqno();
@@ -63,6 +70,8 @@ void ValidateBroadcast::start_up() {
 
   if (broadcast_.block_id.is_masterchain()) {
     if (last_masterchain_block_handle_->id().id.seqno >= broadcast_.block_id.id.seqno) {
+      LOG(WARNING) << "block_flow validate_broadcast masterchain_already_known block_id="
+                   << broadcast_.block_id.to_str();
       finish_query();
       return;
     }
@@ -135,6 +144,8 @@ void ValidateBroadcast::start_up() {
 }
 
 void ValidateBroadcast::got_key_block_id(BlockIdExt block_id) {
+  LOG(WARNING) << "block_flow validate_broadcast got_key_block_id block_id=" << broadcast_.block_id.to_str()
+               << " key_block_id=" << block_id.to_str();
   VLOG(VALIDATOR_DEBUG) << "got_key_block_id " << block_id.id.to_str();
   auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<BlockHandle> R) {
     if (R.is_error()) {
@@ -148,6 +159,8 @@ void ValidateBroadcast::got_key_block_id(BlockIdExt block_id) {
 }
 
 void ValidateBroadcast::got_key_block_handle(ConstBlockHandle handle) {
+  LOG(WARNING) << "block_flow validate_broadcast got_key_block_handle block_id=" << broadcast_.block_id.to_str()
+               << " key_block_id=" << handle->id().to_str() << " unix_time=" << handle->unix_time();
   VLOG(VALIDATOR_DEBUG) << "got_key_block_handle " << handle->id().id.to_str();
   if (handle->id().seqno() == 0) {
     auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<td::Ref<ShardState>> R) {
@@ -182,6 +195,8 @@ void ValidateBroadcast::got_key_block_handle(ConstBlockHandle handle) {
 }
 
 void ValidateBroadcast::got_key_block_proof_link(td::Ref<ProofLink> key_proof_link) {
+  LOG(WARNING) << "block_flow validate_broadcast got_key_block_proof_link block_id="
+               << broadcast_.block_id.to_str();
   VLOG(VALIDATOR_DEBUG) << "got_key_block_proof_link";
   key_proof_link_ = key_proof_link;
   auto confR = key_proof_link->get_key_block_config();
@@ -193,6 +208,7 @@ void ValidateBroadcast::got_key_block_proof_link(td::Ref<ProofLink> key_proof_li
 }
 
 void ValidateBroadcast::got_zero_state(td::Ref<MasterchainState> state) {
+  LOG(WARNING) << "block_flow validate_broadcast got_zero_state block_id=" << broadcast_.block_id.to_str();
   VLOG(VALIDATOR_DEBUG) << "got_zero_state";
   zero_state_ = state;
   auto confR = state->get_config_holder();
@@ -204,6 +220,8 @@ void ValidateBroadcast::got_zero_state(td::Ref<MasterchainState> state) {
 }
 
 void ValidateBroadcast::check_signatures_common(td::Ref<ConfigHolder> conf) {
+  LOG(WARNING) << "block_flow validate_broadcast check_signatures block_id=" << broadcast_.block_id.to_str()
+               << " is_final=" << broadcast_.sig_set->is_final();
   VLOG(VALIDATOR_DEBUG) << "checking signatures (" << (broadcast_.sig_set->is_final() ? "final" : "approve") << ")";
   auto val_set = conf->get_validator_set(broadcast_.block_id.shard_full(), header_info_.utime, header_info_.cc_seqno);
   if (val_set.is_null()) {
@@ -234,6 +252,7 @@ void ValidateBroadcast::check_signatures_common(td::Ref<ConfigHolder> conf) {
 }
 
 void ValidateBroadcast::checked_signatures() {
+  LOG(WARNING) << "block_flow validate_broadcast checked_signatures block_id=" << broadcast_.block_id.to_str();
   VLOG(VALIDATOR_DEBUG) << "checked_signatures";
   auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<BlockHandle> R) {
     if (R.is_error()) {
@@ -247,6 +266,8 @@ void ValidateBroadcast::checked_signatures() {
 }
 
 void ValidateBroadcast::got_block_handle(BlockHandle handle) {
+  LOG(WARNING) << "block_flow validate_broadcast got_block_handle block_id=" << handle->id().to_str()
+               << " unix_time=" << handle->unix_time();
   VLOG(VALIDATOR_DEBUG) << "got_block_handle " << handle->id().id.to_str();
   handle_ = std::move(handle);
 
@@ -275,9 +296,12 @@ void ValidateBroadcast::got_block_handle(BlockHandle handle) {
 }
 
 void ValidateBroadcast::written_block_data() {
+  LOG(WARNING) << "block_flow validate_broadcast written_block_data block_id=" << handle_->id().to_str()
+               << " unix_time=" << handle_->unix_time();
   VLOG(VALIDATOR_DEBUG) << "written_block_data";
   if (handle_->id().is_masterchain()) {
     if (handle_->inited_proof()) {
+      LOG(WARNING) << "block_flow validate_broadcast proof_already_inited block_id=" << handle_->id().to_str();
       checked_proof();
       return;
     }
@@ -289,10 +313,11 @@ void ValidateBroadcast::written_block_data() {
           td::actor::send_closure(SelfId, &ValidateBroadcast::checked_proof);
         }
       });
-      VLOG(VALIDATOR_DEBUG) << "checking proof";
-      if (!key_proof_link_.is_null()) {
-        run_check_proof_query(broadcast_.block_id, proof_, manager_, timeout_, std::move(P), key_proof_link_);
-      } else {
+    VLOG(VALIDATOR_DEBUG) << "checking proof";
+    LOG(WARNING) << "block_flow validate_broadcast check_proof block_id=" << handle_->id().to_str();
+    if (!key_proof_link_.is_null()) {
+      run_check_proof_query(broadcast_.block_id, proof_, manager_, timeout_, std::move(P), key_proof_link_);
+    } else {
         CHECK(zero_state_.not_null());
         run_check_proof_query(broadcast_.block_id, proof_, manager_, timeout_, std::move(P), zero_state_);
       }
@@ -301,6 +326,8 @@ void ValidateBroadcast::written_block_data() {
     }
   } else {
     if (handle_->inited_proof_link()) {
+      LOG(WARNING) << "block_flow validate_broadcast proof_link_already_inited block_id="
+                   << handle_->id().to_str();
       checked_proof();
       return;
     }
@@ -312,11 +339,14 @@ void ValidateBroadcast::written_block_data() {
       }
     });
     VLOG(VALIDATOR_DEBUG) << "checking proof link";
+    LOG(WARNING) << "block_flow validate_broadcast check_proof_link block_id=" << handle_->id().to_str();
     run_check_proof_link_query(broadcast_.block_id, proof_link_, manager_, timeout_, std::move(P));
   }
 }
 
 void ValidateBroadcast::checked_proof() {
+  LOG(WARNING) << "block_flow validate_broadcast checked_proof block_id=" << handle_->id().to_str()
+               << " unix_time=" << handle_->unix_time();
   VLOG(VALIDATOR_DEBUG) << "checked_proof";
   if (handle_->inited_proof() && handle_->is_key_block()) {
     td::actor::send_closure(manager_, &ValidatorManager::update_last_known_key_block, handle_, false);
@@ -331,10 +361,12 @@ void ValidateBroadcast::checked_proof() {
     });
 
     VLOG(VALIDATOR_DEBUG) << "apply block";
+    LOG(WARNING) << "block_flow validate_broadcast apply_block block_id=" << handle_->id().to_str();
     td::actor::create_actor<ApplyBlock>(PSTRING() << "apply" << handle_->id().id.to_str(), handle_->id(), data_,
                                         handle_->id(), manager_, timeout_, std::move(P))
         .release();
   } else {
+    LOG(WARNING) << "block_flow validate_broadcast finish_without_apply block_id=" << handle_->id().to_str();
     finish_query();
   }
 }

@@ -29,18 +29,20 @@ namespace ton {
 namespace validator {
 
 void WaitBlockState::alarm() {
+  LOG(WARNING) << "block_flow wait_state alarm block_id=" << handle_->id().to_str();
   abort_query(td::Status::Error(ErrorCode::timeout, "timeout"));
 }
 
 void WaitBlockState::abort_query(td::Status reason) {
+  LOG(WARNING) << "block_flow wait_state abort block_id=" << handle_->id().to_str() << " reason=" << reason;
   if (promise_no_store_) {
     promise_no_store_.set_error(
         reason.clone().move_as_error_prefix(PSTRING() << "failed to download state " << handle_->id() << ": "));
   }
   if (promise_final_) {
     if (priority_ > 0 || (reason.code() != ErrorCode::timeout && reason.code() != ErrorCode::notready)) {
-      LOG(WARNING) << "aborting wait block state query for " << handle_->id() << " priority=" << priority_ << ": "
-                   << reason;
+      LOG(WARNING) << "aborting wait block state query for " << handle_->id().to_str() << " priority=" << priority_
+                   << ": " << reason;
     } else {
       LOG(DEBUG) << "aborting wait block state query for " << handle_->id() << " priority=" << priority_ << ": "
                  << reason;
@@ -52,6 +54,8 @@ void WaitBlockState::abort_query(td::Status reason) {
 }
 
 void WaitBlockState::finish_query() {
+  LOG(WARNING) << "block_flow wait_state finish block_id=" << handle_->id().to_str()
+               << " unix_time=" << handle_->unix_time();
   CHECK(handle_->received_state());
   if (promise_no_store_) {
     promise_no_store_.set_result(prev_state_);
@@ -66,17 +70,23 @@ void WaitBlockState::start_up() {
   alarm_timestamp() = timeout_;
 
   CHECK(handle_);
+  LOG(WARNING) << "block_flow wait_state start_up block_id=" << handle_->id().to_str()
+               << " unix_time=" << handle_->unix_time();
   start();
 }
 
 void WaitBlockState::start() {
   if (reading_from_db_) {
+    LOG(WARNING) << "block_flow wait_state start already_reading block_id=" << handle_->id().to_str();
     return;
   }
+  LOG(WARNING) << "block_flow wait_state start block_id=" << handle_->id().to_str()
+               << " unix_time=" << handle_->unix_time() << " priority=" << priority_;
   bool inited_proof = handle_->id().is_masterchain() ? handle_->inited_proof() : handle_->inited_proof_link();
   bool allow_download =
       last_masterchain_state_.is_null() || opts_->need_monitor(handle_->id().shard_full(), last_masterchain_state_);
   if (handle_->received_state() && inited_proof) {
+    LOG(WARNING) << "block_flow wait_state read_from_db block_id=" << handle_->id().to_str();
     reading_from_db_ = true;
 
     auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<td::Ref<ShardState>> R) {
@@ -88,6 +98,7 @@ void WaitBlockState::start() {
     });
     td::actor::send_closure(manager_, &ValidatorManager::get_shard_state_from_db, handle_, std::move(P));
   } else if (handle_->id().id.seqno == 0 && next_static_file_attempt_.is_in_past()) {
+    LOG(WARNING) << "block_flow wait_state try_static_file block_id=" << handle_->id().to_str();
     next_static_file_attempt_ = td::Timestamp::in(60.0);
     // id.file_hash contains correct file hash of zero state
     // => if file with this sha256 is found it is guaranteed to be correct
@@ -106,6 +117,7 @@ void WaitBlockState::start() {
     });
     td::actor::send_closure(manager_, &ValidatorManager::try_get_static_file, handle_->id().file_hash, std::move(P));
   } else if (handle_->id().id.seqno == 0) {
+    LOG(WARNING) << "block_flow wait_state get_zero_state_net block_id=" << handle_->id().to_str();
     auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<td::BufferSlice> R) {
       if (R.is_error()) {
         td::actor::send_closure(SelfId, &WaitBlockState::failed_to_get_state_from_net,
@@ -117,9 +129,11 @@ void WaitBlockState::start() {
     td::actor::send_closure(manager_, &ValidatorManager::send_get_zero_state_request, handle_->id(), priority_,
                             std::move(P));
   } else if (check_persistent_state_desc() && !handle_->received_state() && allow_download) {
+    LOG(WARNING) << "block_flow wait_state download_persistent_state block_id=" << handle_->id().to_str();
     auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<td::Ref<ShardState>> R) {
       if (R.is_error()) {
-        LOG(WARNING) << "failed to get persistent state: " << R.move_as_error();
+        LOG(WARNING) << "failed to get persistent state for " << handle_->id().to_str() << ": "
+                     << R.move_as_error();
         td::actor::send_closure(SelfId, &WaitBlockState::start);
       } else {
         td::actor::send_closure(SelfId, &WaitBlockState::written_state, R.move_as_ok());
@@ -147,9 +161,11 @@ void WaitBlockState::start() {
     }
   } else if (!handle_->inited_prev() || (!handle_->inited_proof() && !handle_->inited_proof_link())) {
     if (!allow_download) {
+      LOG(WARNING) << "block_flow wait_state not_monitoring block_id=" << handle_->id().to_str();
       abort_query(td::Status::Error(PSTRING() << "not monitoring shard " << handle_->id().shard_full()));
       return;
     }
+    LOG(WARNING) << "block_flow wait_state request_proof_link block_id=" << handle_->id().to_str();
     auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<td::BufferSlice> R) {
       if (R.is_error()) {
         delay_action([SelfId]() { td::actor::send_closure(SelfId, &WaitBlockState::after_get_proof_link); },
@@ -163,6 +179,7 @@ void WaitBlockState::start() {
     td::actor::send_closure(manager_, &ValidatorManager::send_get_block_proof_link_request, handle_->id(), priority_,
                             std::move(P));
   } else if (prev_state_.is_null()) {
+    LOG(WARNING) << "block_flow wait_state wait_prev_state block_id=" << handle_->id().to_str();
     CHECK(handle_->inited_proof() || handle_->inited_proof_link());
     auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<td::Ref<ShardState>> R) {
       if (R.is_error()) {
@@ -177,9 +194,11 @@ void WaitBlockState::start() {
                             std::move(P));
   } else if (handle_->id().is_masterchain() && !handle_->inited_proof()) {
     if (!allow_download) {
+      LOG(WARNING) << "block_flow wait_state not_monitoring block_id=" << handle_->id().to_str();
       abort_query(td::Status::Error(PSTRING() << "not monitoring shard " << handle_->id().shard_full()));
       return;
     }
+    LOG(WARNING) << "block_flow wait_state request_proof block_id=" << handle_->id().to_str();
     auto P = td::PromiseCreator::lambda([SelfId = actor_id(this), handle = handle_](td::Result<td::BufferSlice> R) {
       if (R.is_error()) {
         delay_action([SelfId]() { td::actor::send_closure(SelfId, &WaitBlockState::after_get_proof); },
@@ -194,9 +213,11 @@ void WaitBlockState::start() {
                             std::move(P));
   } else if (block_.is_null()) {
     if (!allow_download && !handle_->received()) {
+      LOG(WARNING) << "block_flow wait_state not_monitoring block_id=" << handle_->id().to_str();
       abort_query(td::Status::Error(PSTRING() << "not monitoring shard " << handle_->id().shard_full()));
       return;
     }
+    LOG(WARNING) << "block_flow wait_state wait_block_data block_id=" << handle_->id().to_str();
     auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<td::Ref<BlockData>> R) {
       if (R.is_error()) {
         td::actor::send_closure(SelfId, &WaitBlockState::failed_to_get_block_data,
@@ -213,6 +234,8 @@ void WaitBlockState::start() {
 }
 
 void WaitBlockState::failed_to_get_prev_state(td::Status reason) {
+  LOG(WARNING) << "block_flow wait_state failed_prev_state block_id=" << handle_->id().to_str()
+               << " reason=" << reason;
   if (reason.code() == ErrorCode::notready) {
     start();
   } else {
@@ -221,12 +244,15 @@ void WaitBlockState::failed_to_get_prev_state(td::Status reason) {
 }
 
 void WaitBlockState::got_prev_state(td::Ref<ShardState> state) {
+  LOG(WARNING) << "block_flow wait_state got_prev_state block_id=" << handle_->id().to_str()
+               << " unix_time=" << handle_->unix_time();
   prev_state_ = std::move(state);
 
   start();
 }
 
 void WaitBlockState::got_proof_link(td::BufferSlice data) {
+  LOG(WARNING) << "block_flow wait_state got_proof_link block_id=" << handle_->id().to_str();
   if (!waiting_proof_link_) {
     return;
   }
@@ -251,6 +277,7 @@ void WaitBlockState::got_proof_link(td::BufferSlice data) {
 }
 
 void WaitBlockState::got_proof(td::BufferSlice data) {
+  LOG(WARNING) << "block_flow wait_state got_proof block_id=" << handle_->id().to_str();
   if (!waiting_proof_) {
     return;
   }
@@ -267,6 +294,8 @@ void WaitBlockState::got_proof(td::BufferSlice data) {
 }
 
 void WaitBlockState::failed_to_get_block_data(td::Status reason) {
+  LOG(WARNING) << "block_flow wait_state failed_block_data block_id=" << handle_->id().to_str()
+               << " reason=" << reason;
   if (reason.code() == ErrorCode::notready) {
     start();
   } else {
@@ -275,12 +304,16 @@ void WaitBlockState::failed_to_get_block_data(td::Status reason) {
 }
 
 void WaitBlockState::got_block_data(td::Ref<BlockData> data) {
+  LOG(WARNING) << "block_flow wait_state got_block_data block_id=" << handle_->id().to_str()
+               << " unix_time=" << handle_->unix_time();
   block_ = std::move(data);
 
   start();
 }
 
 void WaitBlockState::apply() {
+  LOG(WARNING) << "block_flow wait_state apply block_id=" << handle_->id().to_str()
+               << " unix_time=" << handle_->unix_time();
   auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<td::Ref<ShardState>> R) {
     if (R.is_error()) {
       td::actor::send_closure(SelfId, &WaitBlockState::abort_query, R.move_as_error_prefix("db set error: "));
@@ -309,11 +342,15 @@ void WaitBlockState::apply() {
 }
 
 void WaitBlockState::written_state(td::Ref<ShardState> upd_state) {
+  LOG(WARNING) << "block_flow wait_state written_state block_id=" << handle_->id().to_str()
+               << " unix_time=" << handle_->unix_time();
   prev_state_ = std::move(upd_state);
   finish_query();
 }
 
 void WaitBlockState::got_state_from_db(td::Ref<ShardState> state) {
+  LOG(WARNING) << "block_flow wait_state got_state_from_db block_id=" << handle_->id().to_str()
+               << " unix_time=" << handle_->unix_time();
   prev_state_ = state;
   if (!handle_->received_state()) {
     auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<td::Ref<ShardState>> R) {
@@ -335,6 +372,8 @@ void WaitBlockState::got_state_from_db(td::Ref<ShardState> state) {
 }
 
 void WaitBlockState::got_state_from_static_file(td::Ref<ShardState> state, td::BufferSlice data) {
+  LOG(WARNING) << "block_flow wait_state got_state_from_static_file block_id=" << handle_->id().to_str()
+               << " unix_time=" << handle_->unix_time();
   auto P =
       td::PromiseCreator::lambda([SelfId = actor_id(this), state = std::move(state)](td::Result<td::Unit> R) mutable {
         R.ensure();
@@ -348,6 +387,8 @@ void WaitBlockState::force_read_from_db() {
   if (!handle_ || reading_from_db_) {
     return;
   }
+  LOG(WARNING) << "block_flow wait_state force_read_from_db block_id=" << handle_->id().to_str()
+               << " unix_time=" << handle_->unix_time();
 
   auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<td::Ref<ShardState>> R) {
     if (R.is_error()) {
@@ -360,9 +401,10 @@ void WaitBlockState::force_read_from_db() {
 }
 
 void WaitBlockState::got_state_from_net(td::BufferSlice data) {
+  LOG(WARNING) << "block_flow wait_state got_state_from_net block_id=" << handle_->id().to_str();
   auto R = create_shard_state(handle_->id(), data.clone());
   if (R.is_error()) {
-    LOG(WARNING) << "received bad state from net: " << R.move_as_error();
+    LOG(WARNING) << "received bad state from net for " << handle_->id().to_str() << ": " << R.move_as_error();
     start();
     return;
   }
@@ -372,7 +414,7 @@ void WaitBlockState::got_state_from_net(td::BufferSlice data) {
     handle_->set_state_root_hash(handle_->id().root_hash);
   }
   if (state->root_hash() != handle_->state()) {
-    LOG(WARNING) << "received state have bad root hash";
+    LOG(WARNING) << "received state have bad root hash for " << handle_->id().to_str();
     start();
     return;
   }
@@ -380,13 +422,13 @@ void WaitBlockState::got_state_from_net(td::BufferSlice data) {
   if (handle_->id().id.seqno != 0) {
     auto S = state->validate_deep();
     if (S.is_error()) {
-      LOG(WARNING) << "received bad state from net: " << S;
+      LOG(WARNING) << "received bad state from net for " << handle_->id().to_str() << ": " << S;
       start();
       return;
     }
   } else {
     if (sha256_bits256(data.as_slice()) != handle_->id().file_hash) {
-      LOG(WARNING) << "received bad state from net: file hash mismatch";
+      LOG(WARNING) << "received bad state from net for " << handle_->id().to_str() << ": file hash mismatch";
       start();
       return;
     }
@@ -395,6 +437,8 @@ void WaitBlockState::got_state_from_net(td::BufferSlice data) {
   handle_->set_unix_time(state->get_unix_time());
   handle_->set_is_key_block(handle_->id().is_masterchain() && handle_->id().id.seqno == 0);
   handle_->set_split(state->before_split());
+  LOG(WARNING) << "block_flow wait_state set_block_times block_id=" << handle_->id().to_str()
+               << " unix_time=" << handle_->unix_time();
 
   prev_state_ = std::move(state);
   auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<td::Unit> R) {
@@ -410,6 +454,8 @@ void WaitBlockState::got_state_from_net(td::BufferSlice data) {
 }
 
 void WaitBlockState::written_state_file() {
+  LOG(WARNING) << "block_flow wait_state written_state_file block_id=" << handle_->id().to_str()
+               << " unix_time=" << handle_->unix_time();
   auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<td::Ref<ShardState>> R) {
     if (R.is_error()) {
       td::actor::send_closure(SelfId, &WaitBlockState::abort_query, R.move_as_error_prefix("db set error: "));
@@ -422,6 +468,7 @@ void WaitBlockState::written_state_file() {
 }
 
 void WaitBlockState::failed_to_get_zero_state() {
+  LOG(WARNING) << "block_flow wait_state failed_zero_state block_id=" << handle_->id().to_str();
   auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<td::BufferSlice> R) {
     if (R.is_error()) {
       td::actor::send_closure(SelfId, &WaitBlockState::failed_to_get_state_from_net,
@@ -435,10 +482,12 @@ void WaitBlockState::failed_to_get_zero_state() {
 }
 
 void WaitBlockState::failed_to_get_state_from_net(td::Status reason) {
+  LOG(WARNING) << "block_flow wait_state failed_state_from_net block_id=" << handle_->id().to_str()
+               << " reason=" << reason;
   if (reason.code() == ErrorCode::notready) {
     LOG(DEBUG) << "failed to download state for " << handle_->id() << " from net: " << reason;
   } else {
-    LOG(WARNING) << "failed to download state for " << handle_->id() << " from net: " << reason;
+    LOG(WARNING) << "failed to download state for " << handle_->id().to_str() << " from net: " << reason;
   }
 
   start();

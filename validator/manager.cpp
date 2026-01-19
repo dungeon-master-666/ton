@@ -214,23 +214,31 @@ void ValidatorManagerImpl::validate_block(ReceivedBlock block, td::Promise<Block
 }
 
 void ValidatorManagerImpl::new_block_broadcast(BlockBroadcast broadcast, td::Promise<td::Unit> promise) {
+  LOG(WARNING) << "block_flow new_block_broadcast start block_id=" << broadcast.block_id.to_str();
   if (!started_) {
+    LOG(WARNING) << "block_flow new_block_broadcast not_started block_id=" << broadcast.block_id.to_str();
     promise.set_error(td::Status::Error(ErrorCode::notready, "node not started"));
     return;
   }
   if (!need_monitor(broadcast.block_id.shard_full())) {
+    LOG(WARNING) << "block_flow new_block_broadcast not_monitoring block_id=" << broadcast.block_id.to_str();
     promise.set_error(td::Status::Error("not monitoring shard"));
     return;
   }
   promise = [SelfId = actor_id(this), promise = std::move(promise), block_id = broadcast.block_id,
              cc_seqno = broadcast.sig_set->get_catchain_seqno(),
              is_final = broadcast.sig_set->is_final()](td::Result<td::Unit> R) mutable {
+    LOG(WARNING) << "block_flow new_block_broadcast validated block_id=" << block_id.to_str()
+                 << " ok=" << R.is_ok() << " is_final=" << is_final;
     if (R.is_ok() && is_final) {
+      LOG(WARNING) << "block_flow new_block_broadcast accepted_final block_id=" << block_id.to_str()
+                   << " cc_seqno=" << cc_seqno;
       td::actor::ask(SelfId, &ValidatorManagerImpl::validated_accepted_block_broadcast, block_id, cc_seqno).detach();
     }
     promise.set_result(std::move(R));
   };
   BlockIdExt block_id = broadcast.block_id;
+  LOG(WARNING) << "block_flow new_block_broadcast spawn_validate block_id=" << block_id.to_str();
   td::actor::create_actor<ValidateBroadcast>(PSTRING() << "broadcast" << block_id.id.to_str(), std::move(broadcast),
                                              last_masterchain_block_handle_, last_masterchain_state_,
                                              last_known_key_block_handle_, actor_id(this), td::Timestamp::in(20.0),
@@ -240,15 +248,20 @@ void ValidatorManagerImpl::new_block_broadcast(BlockBroadcast broadcast, td::Pro
 
 td::actor::Task<> ValidatorManagerImpl::validated_accepted_block_broadcast(BlockIdExt block_id,
                                                                            CatchainSeqno cc_seqno) {
+  LOG(WARNING) << "block_flow validated_accepted_block_broadcast start block_id=" << block_id.to_str()
+               << " cc_seqno=" << cc_seqno;
   for (auto &[_, collator_node] : collator_nodes_) {
     if (collator_node.can_collate_shard(block_id.shard_full())) {
       td::actor::send_closure(collator_node.actor, &CollatorNode::new_shard_block_accepted, block_id, cc_seqno);
     }
   }
   if (opts_->nonfinal_ls_queries_enabled()) {
+    LOG(WARNING) << "block_flow validated_accepted_block_broadcast wait_state_start block_id=" << block_id.to_str();
     co_await td::actor::ask(actor_id(this), &ValidatorManagerImpl::wait_block_state_short, block_id, 0,
                             td::Timestamp::in(60.0), true);
+    LOG(WARNING) << "block_flow validated_accepted_block_broadcast wait_state_done block_id=" << block_id.to_str();
   }
+  LOG(WARNING) << "block_flow validated_accepted_block_broadcast process_nonfinal block_id=" << block_id.to_str();
   process_accepted_nonfinal_block(block_id, cc_seqno);
   co_return td::Unit{};
 }
@@ -649,14 +662,18 @@ void ValidatorManagerImpl::add_cached_block_data(BlockIdExt block_id, td::Buffer
   if (block_id.is_masterchain()) {
     return;
   }
+  LOG(WARNING) << "block_flow add_cached_block_data start block_id=" << block_id.to_str();
   td::BufferSlice &block_data = cached_block_data_.get(block_id);
   if (!block_data.empty()) {
+    LOG(WARNING) << "block_flow add_cached_block_data already_cached block_id=" << block_id.to_str();
     return;
   }
   block_data = std::move(data);
+  LOG(WARNING) << "block_flow add_cached_block_data cached block_id=" << block_id.to_str();
   {
     auto it = wait_block_data_.find(block_id);
     if (it != wait_block_data_.end()) {
+      LOG(WARNING) << "block_flow add_cached_block_data notify_wait_data block_id=" << block_id.to_str();
       auto r_block = create_block(ReceivedBlock{block_id, block_data.clone()});
       if (r_block.is_ok()) {
         td::actor::send_closure(it->second.actor_, &WaitBlockData::loaded_block_data, r_block.move_as_ok());
@@ -668,6 +685,7 @@ void ValidatorManagerImpl::add_cached_block_data(BlockIdExt block_id, td::Buffer
   {
     auto it = wait_state_.find(block_id);
     if (it != wait_state_.end()) {
+      LOG(WARNING) << "block_flow add_cached_block_data notify_wait_state block_id=" << block_id.to_str();
       // Proof link is not ready at this point, but this will force WaitBlockState to redo send_get_proof_link_request
       td::actor::send_closure(it->second.actor_, &WaitBlockState::after_get_proof_link);
     }
@@ -783,14 +801,21 @@ void ValidatorManagerImpl::run_ext_query(td::BufferSlice data, td::Promise<td::B
 
 void ValidatorManagerImpl::wait_block_state(BlockHandle handle, td::uint32 priority, td::Timestamp timeout,
                                             bool wait_store, td::Promise<td::Ref<ShardState>> promise) {
+  LOG(WARNING) << "block_flow wait_block_state start block_id=" << handle->id().to_str()
+               << " unix_time=" << handle->unix_time() << " priority=" << priority
+               << " wait_store=" << wait_store;
   auto it0 = block_state_cache_.find(handle->id());
   if (it0 != block_state_cache_.end()) {
     it0->second.ttl_ = td::Timestamp::in(30.0);
+    LOG(WARNING) << "block_flow wait_block_state cache_hit block_id=" << handle->id().to_str()
+                 << " unix_time=" << handle->unix_time();
     promise.set_result(it0->second.state_);
     return;
   }
   auto it = wait_state_.find(handle->id());
   if (it == wait_state_.end()) {
+    LOG(WARNING) << "block_flow wait_block_state spawn_actor block_id=" << handle->id().to_str()
+                 << " unix_time=" << handle->unix_time();
     auto P1 = td::PromiseCreator::lambda([SelfId = actor_id(this), handle](td::Result<td::Ref<ShardState>> R) {
       td::actor::send_closure(SelfId, &ValidatorManagerImpl::finished_wait_state, handle, std::move(R), true);
     });
@@ -807,11 +832,17 @@ void ValidatorManagerImpl::wait_block_state(BlockHandle handle, td::uint32 prior
   }
 
   if (wait_store) {
+    LOG(WARNING) << "block_flow wait_block_state register_wait_store block_id=" << handle->id().to_str()
+                 << " unix_time=" << handle->unix_time();
     it->second.waiting_.emplace_back(timeout, priority, std::move(promise));
   } else if (it->second.preliminary_done_) {
+    LOG(WARNING) << "block_flow wait_block_state preliminary_ready block_id=" << handle->id().to_str()
+                 << " unix_time=" << handle->unix_time();
     promise.set_result(it->second.preliminary_result_);
     return;
   } else {
+    LOG(WARNING) << "block_flow wait_block_state register_preliminary block_id=" << handle->id().to_str()
+                 << " unix_time=" << handle->unix_time();
     it->second.waiting_preliminary_.emplace_back(timeout, priority, std::move(promise));
   }
   auto X = it->second.get_timeout();
@@ -820,12 +851,16 @@ void ValidatorManagerImpl::wait_block_state(BlockHandle handle, td::uint32 prior
 
 void ValidatorManagerImpl::wait_block_state_short(BlockIdExt block_id, td::uint32 priority, td::Timestamp timeout,
                                                   bool wait_store, td::Promise<td::Ref<ShardState>> promise) {
+  LOG(WARNING) << "block_flow wait_block_state_short start block_id=" << block_id.to_str()
+               << " priority=" << priority << " wait_store=" << wait_store;
   auto P = td::PromiseCreator::lambda(
       [=, SelfId = actor_id(this), promise = std::move(promise)](td::Result<BlockHandle> R) mutable {
         if (R.is_error()) {
+          LOG(WARNING) << "block_flow wait_block_state_short get_handle_error block_id=" << block_id.to_str();
           promise.set_error(R.move_as_error());
           return;
         }
+        LOG(WARNING) << "block_flow wait_block_state_short got_handle block_id=" << block_id.to_str();
         td::actor::send_closure(SelfId, &ValidatorManagerImpl::wait_block_state, R.move_as_ok(), priority, timeout,
                                 wait_store, std::move(promise));
       });
@@ -903,8 +938,12 @@ void ValidatorManagerImpl::wait_neighbor_msg_queue_proofs(
 
 void ValidatorManagerImpl::wait_block_data(BlockHandle handle, td::uint32 priority, td::Timestamp timeout,
                                            td::Promise<td::Ref<BlockData>> promise) {
+  LOG(WARNING) << "block_flow wait_block_data start block_id=" << handle->id().to_str()
+               << " unix_time=" << handle->unix_time() << " priority=" << priority;
   auto it = wait_block_data_.find(handle->id());
   if (it == wait_block_data_.end()) {
+    LOG(WARNING) << "block_flow wait_block_data spawn_actor block_id=" << handle->id().to_str()
+                 << " unix_time=" << handle->unix_time();
     auto P = td::PromiseCreator::lambda([SelfId = actor_id(this), handle](td::Result<td::Ref<BlockData>> R) {
       td::actor::send_closure(SelfId, &ValidatorManagerImpl::finished_wait_data, handle, std::move(R));
     });
@@ -917,18 +956,24 @@ void ValidatorManagerImpl::wait_block_data(BlockHandle handle, td::uint32 priori
   }
 
   it->second.waiting_.emplace_back(timeout, priority, std::move(promise));
+  LOG(WARNING) << "block_flow wait_block_data register_wait block_id=" << handle->id().to_str()
+               << " unix_time=" << handle->unix_time();
   auto X = it->second.get_timeout();
   td::actor::send_closure(it->second.actor_, &WaitBlockData::update_timeout, X.first, X.second);
 }
 
 void ValidatorManagerImpl::wait_block_data_short(BlockIdExt block_id, td::uint32 priority, td::Timestamp timeout,
                                                  td::Promise<td::Ref<BlockData>> promise) {
+  LOG(WARNING) << "block_flow wait_block_data_short start block_id=" << block_id.to_str()
+               << " priority=" << priority;
   auto P = td::PromiseCreator::lambda(
       [SelfId = actor_id(this), priority, timeout, promise = std::move(promise)](td::Result<BlockHandle> R) mutable {
         if (R.is_error()) {
+          LOG(WARNING) << "block_flow wait_block_data_short get_handle_error block_id=" << block_id.to_str();
           promise.set_error(R.move_as_error());
           return;
         }
+        LOG(WARNING) << "block_flow wait_block_data_short got_handle block_id=" << block_id.to_str();
         td::actor::send_closure(SelfId, &ValidatorManagerImpl::wait_block_data, R.move_as_ok(), priority, timeout,
                                 std::move(promise));
       });
@@ -1210,6 +1255,8 @@ void ValidatorManagerImpl::get_block_by_seqno_from_db(AccountIdPrefixFull accoun
 
 void ValidatorManagerImpl::finished_wait_state(BlockHandle handle, td::Result<td::Ref<ShardState>> R,
                                                bool preliminary) {
+  LOG(WARNING) << "block_flow finished_wait_state entry block_id=" << handle->id().to_str()
+               << " unix_time=" << handle->unix_time() << " preliminary=" << preliminary << " ok=" << R.is_ok();
   auto it = wait_state_.find(handle->id());
   if (it == wait_state_.end()) {
     return;
@@ -1258,11 +1305,15 @@ void ValidatorManagerImpl::finished_wait_state(BlockHandle handle, td::Result<td
 }
 
 void ValidatorManagerImpl::finished_wait_data(BlockHandle handle, td::Result<td::Ref<BlockData>> R) {
+  LOG(WARNING) << "block_flow finished_wait_data entry block_id=" << handle->id().to_str()
+               << " unix_time=" << handle->unix_time() << " ok=" << R.is_ok();
   auto it = wait_block_data_.find(handle->id());
   if (it != wait_block_data_.end()) {
     if (R.is_error()) {
       auto S = R.move_as_error();
       if (S.code() != ErrorCode::timeout) {
+        LOG(WARNING) << "block_flow finished_wait_data error block_id=" << handle->id().to_str()
+                     << " unix_time=" << handle->unix_time() << " error=" << S;
         for (auto &X : it->second.waiting_) {
           X.promise.set_error(S.clone());
         }
@@ -1279,6 +1330,8 @@ void ValidatorManagerImpl::finished_wait_data(BlockHandle handle, td::Result<td:
       }
     } else {
       auto r = R.move_as_ok();
+      LOG(WARNING) << "block_flow finished_wait_data success block_id=" << handle->id().to_str()
+                   << " unix_time=" << handle->unix_time();
       for (auto &X : it->second.waiting_) {
         X.promise.set_result(r);
       }
@@ -1289,6 +1342,8 @@ void ValidatorManagerImpl::finished_wait_data(BlockHandle handle, td::Result<td:
 
 void ValidatorManagerImpl::set_block_state(BlockHandle handle, td::Ref<ShardState> state,
                                            td::Promise<td::Ref<ShardState>> promise) {
+  LOG(WARNING) << "block_flow set_block_state start block_id=" << handle->id().to_str()
+               << " unix_time=" << handle->unix_time();
   auto P = td::PromiseCreator::lambda(
       [SelfId = actor_id(this), handle, promise = std::move(promise)](td::Result<td::Ref<ShardState>> R) mutable {
         if (R.is_error()) {
@@ -1341,6 +1396,8 @@ void ValidatorManagerImpl::store_zero_state_file(BlockIdExt block_id, td::Buffer
 }
 
 void ValidatorManagerImpl::set_block_data(BlockHandle handle, td::Ref<BlockData> data, td::Promise<td::Unit> promise) {
+  LOG(WARNING) << "block_flow set_block_data start block_id=" << handle->id().to_str()
+               << " unix_time=" << handle->unix_time();
   auto P = td::PromiseCreator::lambda(
       [SelfId = actor_id(this), data, handle, promise = std::move(promise)](td::Result<td::Unit> R) mutable {
         if (R.is_error()) {
@@ -1354,6 +1411,8 @@ void ValidatorManagerImpl::set_block_data(BlockHandle handle, td::Ref<BlockData>
 }
 
 void ValidatorManagerImpl::set_block_proof(BlockHandle handle, td::Ref<Proof> proof, td::Promise<td::Unit> promise) {
+  LOG(WARNING) << "block_flow set_block_proof start block_id=" << handle->id().to_str()
+               << " unix_time=" << handle->unix_time();
   auto P = td::PromiseCreator::lambda(
       [SelfId = actor_id(this), handle, promise = std::move(promise)](td::Result<td::Unit> R) mutable {
         if (R.is_error()) {
@@ -1368,6 +1427,8 @@ void ValidatorManagerImpl::set_block_proof(BlockHandle handle, td::Ref<Proof> pr
 
 void ValidatorManagerImpl::set_block_proof_link(BlockHandle handle, td::Ref<ProofLink> proof,
                                                 td::Promise<td::Unit> promise) {
+  LOG(WARNING) << "block_flow set_block_proof_link start block_id=" << handle->id().to_str()
+               << " unix_time=" << handle->unix_time();
   auto P = td::PromiseCreator::lambda(
       [SelfId = actor_id(this), handle, promise = std::move(promise)](td::Result<td::Unit> R) mutable {
         if (R.is_error()) {
@@ -3644,7 +3705,11 @@ bool ValidatorManagerImpl::is_valid_nonfinal_group(ShardIdFull shard, CatchainSe
 }
 
 void ValidatorManagerImpl::process_accepted_nonfinal_block(BlockIdExt block_id, CatchainSeqno cc_seqno) {
+  LOG(WARNING) << "block_flow process_accepted_nonfinal_block start block_id=" << block_id.to_str()
+               << " cc_seqno=" << cc_seqno;
   if (!is_valid_nonfinal_group(block_id.shard_full(), cc_seqno)) {
+    LOG(WARNING) << "block_flow process_accepted_nonfinal_block invalid_group block_id=" << block_id.to_str()
+                 << " cc_seqno=" << cc_seqno;
     return;
   }
   if (opts_->nonfinal_ls_queries_enabled()) {
@@ -3657,6 +3722,8 @@ void ValidatorManagerImpl::process_accepted_nonfinal_block(BlockIdExt block_id, 
     }
   }
   if (!db_event_publisher_.empty()) {
+    LOG(WARNING) << "block_flow process_accepted_nonfinal_block publish block_id=" << block_id.to_str()
+                 << " cc_seqno=" << cc_seqno;
     VLOG(VALIDATOR_DEBUG) << "DB Event: blockSigned " << block_id.to_str();
     td::actor::ask(db_event_publisher_, &DbEventPublisher::publish,
                    create_tl_object<ton_api::db_event_blockSigned>(create_tl_block_id(block_id)))
