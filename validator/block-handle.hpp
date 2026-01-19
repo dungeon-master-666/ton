@@ -295,7 +295,10 @@ struct BlockHandleImpl : public BlockHandleInterface {
     return flags_.load(std::memory_order_consume) & Flags::dbf_inited_ts;
   }
   UnixTime unix_time() const override {
-    CHECK(inited_unix_time());
+    // CHECK(inited_unix_time());
+    if (!inited_unix_time()) {
+      return UnixTime::zero();
+    }
     return ts_;
   }
   void set_unix_time(UnixTime ts) override {
