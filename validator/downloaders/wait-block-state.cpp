@@ -130,9 +130,9 @@ void WaitBlockState::start() {
                             std::move(P));
   } else if (check_persistent_state_desc() && !handle_->received_state() && allow_download) {
     LOG(WARNING) << "block_flow wait_state download_persistent_state block_id=" << handle_->id().to_str();
-    auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<td::Ref<ShardState>> R) {
+    auto P = td::PromiseCreator::lambda([SelfId = actor_id(this), handle = handle_](td::Result<td::Ref<ShardState>> R) {
       if (R.is_error()) {
-        LOG(WARNING) << "failed to get persistent state for " << handle_->id().to_str() << ": "
+        LOG(WARNING) << "failed to get persistent state for " << handle->id().to_str() << ": "
                      << R.move_as_error();
         td::actor::send_closure(SelfId, &WaitBlockState::start);
       } else {

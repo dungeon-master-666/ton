@@ -967,7 +967,7 @@ void ValidatorManagerImpl::wait_block_data_short(BlockIdExt block_id, td::uint32
   LOG(WARNING) << "block_flow wait_block_data_short start block_id=" << block_id.to_str()
                << " priority=" << priority;
   auto P = td::PromiseCreator::lambda(
-      [SelfId = actor_id(this), priority, timeout, promise = std::move(promise)](td::Result<BlockHandle> R) mutable {
+      [SelfId = actor_id(this), priority, timeout, block_id, promise = std::move(promise)](td::Result<BlockHandle> R) mutable {
         if (R.is_error()) {
           LOG(WARNING) << "block_flow wait_block_data_short get_handle_error block_id=" << block_id.to_str();
           promise.set_error(R.move_as_error());
