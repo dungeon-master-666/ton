@@ -1960,6 +1960,9 @@ auto to_tonlib_api(const ton::lite_api::liteServer_transactionId& txid) -> tonli
 td::Status check_block_transactions_proof(lite_api_ptr<ton::lite_api::liteServer_blockTransactions>& bTxes,
                                           int32_t mode, ton::LogicalTime start_lt, td::Bits256 start_addr,
                                           td::Bits256 root_hash, int req_count);
+td::Status check_lookup_block_proof(lite_api_ptr<ton::lite_api::liteServer_lookupBlockResult>& result, int mode,
+                                    ton::BlockId blkid, ton::BlockIdExt client_mc_blkid, td::uint64 lt,
+                                    td::uint32 utime);
 
 class RunEmulator : public TonlibQueryActor {
  public:
@@ -1997,56 +2000,86 @@ class RunEmulator : public TonlibQueryActor {
 
   void get_block_id(td::Promise<FullBlockId>&& promise) {
     auto shard_id = ton::shard_prefix(request_.address.addr, 60);
-    auto query = ton::lite_api::liteServer_lookupBlock(
-        0b111111010, ton::create_tl_lite_block_id_simple({request_.address.workchain, shard_id, 0}), request_.lt, 0);
-    client_.send_query(
-        std::move(query),
-        promise.wrap([shard_id](td::Result<tonlib_api::object_ptr<ton::lite_api::liteServer_blockHeader>> header_r)
-                         -> td::Result<FullBlockId> {
-          TRY_RESULT(header, std::move(header_r));
-          ton::BlockIdExt block_id = ton::create_block_id(header->id_);
-          TRY_RESULT(root, vm::std_boc_deserialize(std::move(header->header_proof_)));
-
-          try {
-            auto virt_root = vm::MerkleProof::virtualize(root);
-            if (virt_root.is_null()) {
-              return td::Status::Error("block header proof is not a valid Merkle proof");
+    auto blkid = ton::BlockId(request_.address.workchain, shard_id, 0);
+    auto mode = 0b111111010;
+    auto lt = static_cast<td::uint64>(request_.lt);
+    client_.with_last_block([self = this, promise = std::move(promise), shard_id, blkid, mode,
+                             lt](td::Result<LastBlockState> r_last_block) mutable {
+      if (r_last_block.is_error()) {
+        promise.set_error(r_last_block.move_as_error());
+        return;
+      }
+      auto trusted_mc_block_id = r_last_block.move_as_ok().last_block_id;
+      auto query = ton::lite_api::liteServer_lookupBlockWithProof(
+          mode, ton::create_tl_lite_block_id_simple(blkid), ton::create_tl_lite_block_id(trusted_mc_block_id), lt, 0);
+      self->client_.send_query(
+          std::move(query),
+          [self, promise = std::move(promise), shard_id, blkid, mode, lt, trusted_mc_block_id](
+                           td::Result<tonlib_api::object_ptr<ton::lite_api::liteServer_lookupBlockResult>>
+                               lookup_result_r) mutable {
+            if (lookup_result_r.is_error()) {
+              promise.set_error(lookup_result_r.move_as_error());
+              return;
             }
-
-            if (ton::RootHash{virt_root->get_hash().bits()} != block_id.root_hash) {
-              return td::Status::Error("block header has incorrect root hash");
+            auto lookup_result = lookup_result_r.move_as_ok();
+            auto check_status = check_lookup_block_proof(lookup_result, mode, blkid, trusted_mc_block_id, lt, 0);
+            if (check_status.is_error()) {
+              promise.set_error(std::move(check_status));
+              return;
             }
+            auto block_id = ton::create_block_id(lookup_result->id_);
+            self->client_.send_query(
+                ton::lite_api::liteServer_getBlockHeader(ton::create_tl_lite_block_id(block_id), 0xffff),
+                promise.wrap([shard_id, block_id](td::Result<tonlib_api::object_ptr<ton::lite_api::liteServer_blockHeader>>
+                                                      header_r) -> td::Result<FullBlockId> {
+                  TRY_RESULT(header, std::move(header_r));
+                  if (block_id != ton::create_block_id(header->id_)) {
+                    return td::Status::Error("liteserver returned mismatched block header");
+                  }
+                  TRY_RESULT(root, vm::std_boc_deserialize(std::move(header->header_proof_)));
 
-            std::vector<ton::BlockIdExt> prev_blocks;
-            ton::BlockIdExt mc_block_id;
-            bool after_split;
-            td::Status status =
-                block::unpack_block_prev_blk_ext(virt_root, block_id, prev_blocks, mc_block_id, after_split);
-            if (status.is_error()) {
-              return status.move_as_error();
-            }
+                  try {
+                    auto virt_root = vm::MerkleProof::virtualize(root);
+                    if (virt_root.is_null()) {
+                      return td::Status::Error("block header proof is not a valid Merkle proof");
+                    }
 
-            ton::BlockIdExt prev_block;
-            if (prev_blocks.size() == 1 || ton::shard_is_ancestor(prev_blocks[0].id.shard, shard_id)) {
-              prev_block = std::move(prev_blocks[0]);
-            } else {
-              prev_block = std::move(prev_blocks[1]);
-            }
+                    if (ton::RootHash{virt_root->get_hash().bits()} != block_id.root_hash) {
+                      return td::Status::Error("block header has incorrect root hash");
+                    }
 
-            block::gen::Block::Record block;
-            block::gen::BlockExtra::Record extra;
-            if (!tlb::unpack_cell(virt_root, block) || !tlb::unpack_cell(block.extra, extra)) {
-              return td::Status::Error("cannot unpack block header");
-            }
+                    std::vector<ton::BlockIdExt> prev_blocks;
+                    ton::BlockIdExt mc_block_id;
+                    bool after_split;
+                    td::Status status =
+                        block::unpack_block_prev_blk_ext(virt_root, block_id, prev_blocks, mc_block_id, after_split);
+                    if (status.is_error()) {
+                      return status.move_as_error();
+                    }
 
-            return FullBlockId{std::move(block_id), std::move(mc_block_id), std::move(prev_block),
-                               std::move(extra.rand_seed)};
-          } catch (vm::VmError& err) {
-            return err.as_status("error processing header");
-          } catch (vm::VmVirtError& err) {
-            return err.as_status("error processing header");
-          }
-        }));
+                    ton::BlockIdExt prev_block;
+                    if (prev_blocks.size() == 1 || ton::shard_is_ancestor(prev_blocks[0].id.shard, shard_id)) {
+                      prev_block = std::move(prev_blocks[0]);
+                    } else {
+                      prev_block = std::move(prev_blocks[1]);
+                    }
+
+                    block::gen::Block::Record block;
+                    block::gen::BlockExtra::Record extra;
+                    if (!tlb::unpack_cell(virt_root, block) || !tlb::unpack_cell(block.extra, extra)) {
+                      return td::Status::Error("cannot unpack block header");
+                    }
+
+                    return FullBlockId{std::move(block_id), std::move(mc_block_id), std::move(prev_block),
+                                       std::move(extra.rand_seed)};
+                  } catch (vm::VmError& err) {
+                    return err.as_status("error processing header");
+                  } catch (vm::VmVirtError& err) {
+                    return err.as_status("error processing header");
+                  }
+                }));
+          });
+    });
   }
 
   void get_mc_state_root(td::Promise<td::Ref<vm::Cell>>&& promise) {
@@ -5915,8 +5948,7 @@ td::Status check_lookup_block_proof(lite_api_ptr<ton::lite_api::liteServer_looku
     try {
       for (auto& link : result->shard_links_) {
         ton::BlockIdExt prev_id = create_block_id(link->id_);
-        td::BufferSlice proof = std::move(link->proof_);
-        auto R = vm::std_boc_deserialize(proof);
+        auto R = vm::std_boc_deserialize(link->proof_.as_slice());
         if (R.is_error()) {
           return TonlibError::InvalidBagOfCells("proof");
         }
@@ -5960,7 +5992,7 @@ td::Status check_lookup_block_proof(lite_api_ptr<ton::lite_api::liteServer_looku
       return td::Status::Error("response block has incorrect workchain/shard");
     }
 
-    auto header_r = vm::std_boc_deserialize(std::move(result->header_));
+    auto header_r = vm::std_boc_deserialize(result->header_.as_slice());
     if (header_r.is_error()) {
       return TonlibError::InvalidBagOfCells("header");
     }
@@ -5994,7 +6026,7 @@ td::Status check_lookup_block_proof(lite_api_ptr<ton::lite_api::liteServer_looku
         return td::Status::Error("invalid seqno in proof");
       }
     } else if (mode & 6) {
-      auto prev_header_r = vm::std_boc_deserialize(std::move(result->prev_header_));
+      auto prev_header_r = vm::std_boc_deserialize(result->prev_header_.as_slice());
       if (prev_header_r.is_error()) {
         return TonlibError::InvalidBagOfCells("prev_headers");
       }
