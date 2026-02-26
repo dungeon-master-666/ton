@@ -5601,10 +5601,10 @@ tonlib_api::object_ptr<tonlib_api::Object> TonlibClient::do_static_request(
     return status_to_tonlib_api(TonlibError::EmptyField("data"));
   }
   if (!request.data_->data_) {
-    TonlibError::EmptyField("data.data");
+    return status_to_tonlib_api(TonlibError::EmptyField("data.data"));
   }
   if (!request.data_->source_) {
-    TonlibError::EmptyField("data.source");
+    return status_to_tonlib_api(TonlibError::EmptyField("data.source"));
   }
   using ReturnType = tonlib_api::object_ptr<tonlib_api::msg_Data>;
   return downcast_call2<ReturnType>(
