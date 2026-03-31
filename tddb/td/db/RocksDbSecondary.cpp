@@ -15,8 +15,9 @@
 #include "td/db/RocksDbSecondary.h"
 
 #include "rocksdb/db.h"
-#include "rocksdb/table.h"
+#include "rocksdb/filter_policy.h"
 #include "rocksdb/statistics.h"
+#include "rocksdb/table.h"
 #include "rocksdb/write_batch.h"
 #include "rocksdb/utilities/transaction.h"
 
@@ -56,22 +57,35 @@ RocksDbSecondary RocksDbSecondary::clone() const {
 
 Result<RocksDbSecondary> RocksDbSecondary::open(std::string path, RocksDbSecondaryOptions options) {
   rocksdb::DB *db;
-  auto statistics = rocksdb::CreateDBStatistics();
   {
     rocksdb::Options db_options;
     db_options.merge_operator = options.merge_operator;
     db_options.compaction_filter = options.compaction_filter;
 
-    static auto default_cache = rocksdb::NewLRUCache(1 << 30);
-    if (options.block_cache == nullptr) {
-      options.block_cache = default_cache;
+    if (!options.no_block_cache && options.block_cache == nullptr) {
+      // Secondary instances must not share the implicit default cache across different DBs because recent rocksdb version it leads to NotFound error (file not in archive slice). But need to verify this again.
+      options.block_cache = rocksdb::NewLRUCache(1 << 30);
     }
 
     rocksdb::BlockBasedTableOptions table_options;
-    // commenting this line because in recent rocksdb version it leads to NotFound error (file not in archive slice)
-    // table_options.block_cache = options.block_cache; 
+    if (options.no_block_cache) {
+      table_options.no_block_cache = true;
+    } else {
+      table_options.block_cache = options.block_cache;
+    }
+    if (options.enable_bloom_filter) {
+      table_options.filter_policy.reset(rocksdb::NewBloomFilterPolicy(10, false));
+      if (options.two_level_index_and_filter) {
+        table_options.index_type = rocksdb::BlockBasedTableOptions::IndexType::kTwoLevelIndexSearch;
+        table_options.partition_filters = true;
+        table_options.cache_index_and_filter_blocks = true;
+        table_options.pin_l0_filter_and_index_blocks_in_cache = true;
+      }
+    }
     db_options.table_factory.reset(rocksdb::NewBlockBasedTableFactory(table_options));
 
+    db_options.wal_recovery_mode = rocksdb::WALRecoveryMode::kTolerateCorruptedTailRecords;
+    db_options.use_direct_reads = options.use_direct_reads;
     db_options.manual_wal_flush = true;
     db_options.create_if_missing = true;
     db_options.max_background_compactions = 4;
@@ -80,6 +94,7 @@ Result<RocksDbSecondary> RocksDbSecondary::open(std::string path, RocksDbSeconda
     db_options.writable_file_max_buffer_size = 2 << 14;
     db_options.keep_log_file_num = 1;
     db_options.statistics = options.statistics;
+    db_options.max_log_file_size = 100 << 20;
     rocksdb::ColumnFamilyOptions cf_options(db_options);
     std::vector<rocksdb::ColumnFamilyDescriptor> column_families;
     column_families.push_back(rocksdb::ColumnFamilyDescriptor(rocksdb::kDefaultColumnFamilyName, cf_options));
