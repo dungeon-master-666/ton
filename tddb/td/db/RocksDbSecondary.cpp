@@ -64,7 +64,7 @@ Result<RocksDbSecondary> RocksDbSecondary::open(std::string path, RocksDbSeconda
 
     if (!options.no_block_cache && options.block_cache == nullptr) {
       // Secondary instances must not share the implicit default cache across different DBs because recent rocksdb version it leads to NotFound error (file not in archive slice). But need to verify this again.
-      options.block_cache = rocksdb::NewLRUCache(1 << 30);
+      // options.block_cache = rocksdb::NewLRUCache(1 << 30);
     }
 
     rocksdb::BlockBasedTableOptions table_options;
