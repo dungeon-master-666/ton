@@ -1714,7 +1714,8 @@ td::Ref<MasterchainState> ValidatorManagerImpl::do_get_last_liteserver_state() {
   // Allowed lag depends on the block rate
   double time_per_block = double(last_masterchain_state_->get_unix_time() - last_liteserver_state_->get_unix_time()) /
                           double(last_masterchain_state_->get_seqno() - last_liteserver_state_->get_seqno());
-  if (td::Clocks::system() - double(last_liteserver_state_->get_unix_time()) > std::min(time_per_block * 8, 180.0)) {
+  double allowed_lag = std::max(std::min(time_per_block * 8, 180.0), 2.0);
+  if (td::Clocks::system() - double(last_liteserver_state_->get_unix_time()) > allowed_lag) {
     last_liteserver_state_ = last_masterchain_state_;
   }
   return last_liteserver_state_;
