@@ -227,7 +227,7 @@ class ArchiveSlice : public td::actor::Actor {
 
   td::Result<PackageInfo *> choose_package(BlockSeqno masterchain_seqno, ShardIdFull shard_prefix, bool force);
   td::Result<PackageInfo *> choose_package(const ConstBlockHandle &handle, bool force);
-  void add_package(BlockSeqno masterchain_seqno, ShardIdFull shard_prefix, td::uint64 size, td::uint32 version);
+  bool add_package(BlockSeqno masterchain_seqno, ShardIdFull shard_prefix, td::uint64 size, td::uint32 version);
   void truncate_shard(BlockSeqno masterchain_seqno, ShardIdFull shard, td::uint32 cutoff_seqno, Package *pack);
   bool truncate_block(BlockSeqno masterchain_seqno, BlockIdExt block_id, td::uint32 cutoff_seqno, Package *pack);
 
