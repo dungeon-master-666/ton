@@ -957,13 +957,19 @@ void ArchiveSlice::end_async_query() {
   }
 }
 
-td::Status ArchiveSlice::try_catch_up_with_primary() {
+void ArchiveSlice::try_catch_up_with_primary(td::Promise<td::Unit> promise) {
   CHECK(mode_ == td::DbOpenMode::db_secondary);
+  td::Status status;
   if (status_ == st_closed) {
     before_query();
-    return td::Status::OK();
+    status = td::Status::OK();
   } else {
-    return try_catch_up_with_primary_impl();
+    status = try_catch_up_with_primary_impl();
+  }
+  if (status.is_error()) {
+    promise.set_error(std::move(status));
+  } else {
+    promise.set_value(td::Unit());
   }
 }
 
