@@ -787,7 +787,9 @@ void ArchiveSlice::before_query() {
             seqno = archive_id_ + slice_size_ * i;
             shard_prefix = ShardIdFull{masterchainId};
           }
-          add_package(seqno, shard_prefix, len, ver);
+          if (!add_package(seqno, shard_prefix, len, ver)) {
+            break;
+          }
         }
       } else {
         auto len = td::to_integer<td::uint64>(value);
@@ -1009,7 +1011,9 @@ td::Status ArchiveSlice::try_catch_up_with_primary_impl() {
           seqno = archive_id_ + slice_size_ * i;
           shard_prefix = ShardIdFull{masterchainId};
         }
-        add_package(seqno, shard_prefix, len, ver);
+        if (!add_package(seqno, shard_prefix, len, ver)) {
+          break;
+        }
       }
     }
   }
@@ -1097,6 +1101,9 @@ ArchiveSlice::ArchiveSlice(td::uint32 archive_id, bool key_blocks_only, bool tem
 td::Result<ArchiveSlice::PackageInfo *> ArchiveSlice::choose_package(BlockSeqno masterchain_seqno,
                                                                      ShardIdFull shard_prefix, bool force) {
   if (temp_ || key_blocks_only_ || !sliced_mode_) {
+    if (packages_.empty()) {
+      return td::Status::Error(ErrorCode::notready, "archive package is not open yet");
+    }
     return packages_[0].get();
   }
   if (masterchain_seqno < archive_id_) {
@@ -1124,7 +1131,9 @@ td::Result<ArchiveSlice::PackageInfo *> ArchiveSlice::choose_package(BlockSeqno 
       kv_->set(PSTRING() << "info." << v, package_info_to_str(masterchain_seqno, shard_prefix)).ensure();
     }
     commit_transaction_now();
-    add_package(masterchain_seqno, shard_prefix, 0, default_package_version());
+    if (!add_package(masterchain_seqno, shard_prefix, 0, default_package_version())) {
+      return td::Status::Error(ErrorCode::notready, "archive package is not open yet");
+    }
     return packages_[v].get();
   } else {
     return packages_[it->second].get();
@@ -1139,7 +1148,7 @@ td::Result<ArchiveSlice::PackageInfo *> ArchiveSlice::choose_package(const Const
   return choose_package(0, ShardIdFull{masterchainId}, true);
 }
 
-void ArchiveSlice::add_package(td::uint32 seqno, ShardIdFull shard_prefix, td::uint64 size, td::uint32 version) {
+bool ArchiveSlice::add_package(td::uint32 seqno, ShardIdFull shard_prefix, td::uint64 size, td::uint32 version) {
   PackageId p_id{seqno, key_blocks_only_, temp_};
   std::string path_legacy = PSTRING() << db_root_ << p_id.path() << get_package_file_name(p_id, shard_prefix, true);
   std::string path_new = PSTRING() << db_root_ << p_id.path() << get_package_file_name(p_id, shard_prefix, false);
@@ -1160,11 +1169,11 @@ void ArchiveSlice::add_package(td::uint32 seqno, ShardIdFull shard_prefix, td::u
   auto R = Package::open(path, mode_ != td::DbOpenMode::db_primary, mode_ == td::DbOpenMode::db_primary);
   if (R.is_error()) {
     if (mode_ == td::DbOpenMode::db_secondary) {
-      LOG(ERROR) << "failed to open/create archive '" << path << "': " << R.move_as_error();
+      LOG(WARNING) << "archive package is not ready yet '" << path << "': " << R.move_as_error();
     } else {
       LOG(FATAL) << "failed to open/create archive '" << path << "': " << R.move_as_error();
     }
-    return;
+    return false;
   }
   if (statistics_.pack_statistics) {
     statistics_.pack_statistics->record_open();
@@ -1174,7 +1183,7 @@ void ArchiveSlice::add_package(td::uint32 seqno, ShardIdFull shard_prefix, td::u
   if (finalized_) {
     packages_.push_back(std::make_unique<PackageInfo>(nullptr, td::actor::ActorOwn<PackageWriter>(), seqno,
                                                       shard_prefix, path, idx, version));
-    return;
+    return true;
   }
   auto pack = std::make_shared<Package>(R.move_as_ok());
   if (version >= 1 && mode_ == td::DbOpenMode::db_primary) {
@@ -1184,6 +1193,7 @@ void ArchiveSlice::add_package(td::uint32 seqno, ShardIdFull shard_prefix, td::u
                                                        async_mode_, statistics_.pack_statistics);
   packages_.push_back(
       std::make_unique<PackageInfo>(std::move(pack), std::move(writer), seqno, shard_prefix, path, idx, version));
+  return true;
 }
 
 namespace {
