@@ -707,7 +707,8 @@ td::actor::ActorOwn<ArchiveSlice> ArchiveManager::create_archive_slice(const Pac
                                                                        td::uint32 shard_split_depth) {
   auto actor = td::actor::create_actor<ArchiveSlice>(
       PSTRING() << "slice." << (id.temp ? "temp." : (id.key ? "key." : "")) << id.id, id.id, id.key, id.temp, false,
-      shard_split_depth, db_root_, archive_lru_.get(), statistics_, mode_, opts_->get_secondary_working_dir());
+      shard_split_depth, db_root_, archive_lru_.get(), statistics_, mode_, opts_->get_secondary_working_dir(),
+      opts_->get_secondary_catch_up_interval());
   if (async_mode_) {
     td::actor::send_closure(actor, &ArchiveSlice::set_async_mode, true, [](td::Result<td::Unit>) {});
   }
@@ -1061,8 +1062,11 @@ void ArchiveManager::alarm() {
   }
 }
 
-void ArchiveManager::try_catch_up_with_primary(td::Promise<td::Unit> promise) {
-  CHECK(mode_ == td::DbOpenMode::db_secondary);
+void ArchiveManager::try_catch_up_with_primary(CatchUpMode mode, td::Promise<td::Unit> promise) {
+  if (mode_ != td::DbOpenMode::db_secondary || mode == CatchUpMode::None) {
+    promise.set_value(td::Unit());
+    return;
+  }
 
   auto index_secondary = std::static_pointer_cast<td::RocksDbSecondary>(index_);
 
@@ -1113,7 +1117,7 @@ void ArchiveManager::try_catch_up_with_primary(td::Promise<td::Unit> promise) {
         }
         promise.set_result(std::move(R));
       });
-      td::actor::send_closure(actor_id, &ArchiveSlice::try_catch_up_with_primary, std::move(P));
+      td::actor::send_closure(actor_id, &ArchiveSlice::try_catch_up_with_primary, CatchUpMode::Force, std::move(P));
     }
   }
 
@@ -1158,7 +1162,7 @@ void ArchiveManager::try_catch_up_with_primary(td::Promise<td::Unit> promise) {
         }
         promise.set_result(std::move(R));
       });
-      td::actor::send_closure(actor_id, &ArchiveSlice::try_catch_up_with_primary, std::move(P));
+      td::actor::send_closure(actor_id, &ArchiveSlice::try_catch_up_with_primary, mode, std::move(P));
     }
   }
   promise2.set_value(td::Unit());
@@ -1202,17 +1206,17 @@ td::Status ArchiveManager::catch_up_package(const PackageId& id) {
   return td::Status::OK();
 }
 
-void ArchiveManager::get_max_masterchain_seqno(td::Promise<BlockSeqno> promise) {
+void ArchiveManager::get_max_masterchain_seqno(bool force_catch_up, td::Promise<BlockSeqno> promise) {
   auto fd = get_file_desc_by_seqno(ton::AccountIdPrefixFull(ton::masterchainId, ton::shardIdAll), INT_MAX, false);
-  if (mode_ == td::DbOpenMode::db_secondary) {
-    auto R = td::PromiseCreator::lambda([SelfId = actor_id(this), promise = std::move(promise), file = fd->file.get()](td::Result<td::Unit> R) mutable {
+  if (mode_ == td::DbOpenMode::db_secondary && force_catch_up) {
+    auto R = td::PromiseCreator::lambda([promise = std::move(promise), file = fd->file.get()](td::Result<td::Unit> R) mutable {
       if (R.is_error()) {
         promise.set_error(R.move_as_error());
       } else {
         td::actor::send_closure(file, &ArchiveSlice::get_max_masterchain_seqno, std::move(promise));
       }
     });
-    td::actor::send_closure(fd->file, &ArchiveSlice::try_catch_up_with_primary, std::move(R));
+    td::actor::send_closure(fd->file, &ArchiveSlice::try_catch_up_with_primary, CatchUpMode::Force, std::move(R));
   } else {
     td::actor::send_closure(fd->file, &ArchiveSlice::get_max_masterchain_seqno, std::move(promise));
   }
@@ -1507,7 +1511,8 @@ void ArchiveManager::iterate_temp_block_handles(std::function<void(const BlockHa
               td::actor::send_closure(file_actor_id, &ArchiveSlice::iterate_block_handles, f);
             }
           });
-      td::actor::send_closure(file.file_actor_id(), &ArchiveSlice::try_catch_up_with_primary, std::move(R));
+      td::actor::send_closure(file.file_actor_id(), &ArchiveSlice::try_catch_up_with_primary, CatchUpMode::Force,
+                              std::move(R));
     } else {
       td::actor::send_closure(file.file_actor_id(), &ArchiveSlice::iterate_block_handles, f);
     }

@@ -79,10 +79,10 @@ class ArchiveManager : public td::actor::Actor {
   void start_up() override;
   void alarm() override;
 
-  void try_catch_up_with_primary(td::Promise<td::Unit> promise);
+  void try_catch_up_with_primary(CatchUpMode mode, td::Promise<td::Unit> promise);
   td::Status catch_up_package(const PackageId& id);
 
-  void get_max_masterchain_seqno(td::Promise<BlockSeqno> promise);
+  void get_max_masterchain_seqno(bool force_catch_up, td::Promise<BlockSeqno> promise);
   void get_min_masterchain_seqno(td::Promise<BlockSeqno> promise);
 
   void commit_transaction();

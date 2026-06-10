@@ -23,6 +23,7 @@
 #include "td/db/RocksDb.h"
 #include "validator/interfaces/db.h"
 
+#include "catch-up.hpp"
 #include "fileref.hpp"
 #include "package.hpp"
 
@@ -106,7 +107,8 @@ class ArchiveSlice : public td::actor::Actor {
  public:
   ArchiveSlice(td::uint32 archive_id, bool key_blocks_only, bool temp, bool finalized, td::uint32 shard_split_depth,
                std::string db_root, td::actor::ActorId<ArchiveLru> archive_lru, DbStatistics statistics = {}, 
-               td::DbOpenMode mode = td::DbOpenMode::db_primary, td::optional<std::string> secondary_workdir = {});
+               td::DbOpenMode mode = td::DbOpenMode::db_primary, td::optional<std::string> secondary_workdir = {},
+               double secondary_catch_up_interval = 1.0);
 
   void tear_down() override;
 
@@ -144,8 +146,8 @@ class ArchiveSlice : public td::actor::Actor {
 
   void iterate_block_handles(std::function<void(const BlockHandleInterface &)> f);
   void get_temp_max_seqnos(td::Promise<std::map<ShardIdFull, BlockSeqno>> promise);
-  
-  void try_catch_up_with_primary(td::Promise<td::Unit> promise);
+
+  void try_catch_up_with_primary(CatchUpMode mode, td::Promise<td::Unit> promise);
 
  private:
   void before_query();
@@ -155,7 +157,7 @@ class ArchiveSlice : public td::actor::Actor {
   void begin_async_query_impl();
   void end_async_query();
 
-  td::Status try_catch_up_with_primary_impl();
+  td::Status try_catch_up_with_primary_impl(CatchUpMode mode);
 
   void begin_transaction();
   void commit_transaction(td::Promise<td::Unit> promise);
@@ -198,6 +200,7 @@ class ArchiveSlice : public td::actor::Actor {
   std::unique_ptr<td::KeyValue> kv_;
   td::DbOpenMode mode_;
   td::optional<std::string> secondary_workdir_;
+  double secondary_catch_up_interval_{1.0};
   td::Timestamp last_catch_up_;
 
   struct PackageInfo {
