@@ -140,9 +140,9 @@ class RootDb : public Db {
 
   void run_gc(Ref<MasterchainState> shard_client_state, UnixTime gc_ts, double archive_ttl) override;
 
-  void try_catch_up_with_primary(td::Promise<td::Unit> promise);
+  void try_catch_up_with_primary(CatchUpMode mode, td::Promise<td::Unit> promise);
 
-  void get_max_masterchain_seqno(td::Promise<BlockSeqno> promise);
+  void get_max_masterchain_seqno(bool force_catch_up, td::Promise<BlockSeqno> promise);
   void get_min_masterchain_seqno(td::Promise<BlockSeqno> promise);
 
   void add_persistent_state_description(td::Ref<PersistentStateDescription> desc,

@@ -390,14 +390,20 @@ void StateDb::get_persistent_state_descriptions(td::Promise<std::vector<td::Ref<
 }
 
 void StateDb::try_catch_up_with_primary(td::Promise<td::Unit> promise) {
+  if (mode_ != td::DbOpenMode::db_secondary) {
+    promise.set_value(td::Unit());
+    return;
+  }
   CHECK(mode_ == td::DbOpenMode::db_secondary)
   auto secondary = dynamic_cast<td::RocksDbSecondary *>(kv_.get());
   if (secondary == nullptr) {
     promise.set_error(td::Status::Error("it's not secondary db"));
+    return;
   }
   auto R = secondary->try_catch_up_with_primary();
   if (R.is_error()) {
     promise.set_error(R.move_as_error());
+    return;
   }
   promise.set_result(td::Unit());
 }

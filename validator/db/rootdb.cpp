@@ -391,21 +391,24 @@ void RootDb::get_block_by_seqno(AccountIdPrefixFull account, BlockSeqno seqno, t
   td::actor::send_closure(archive_db_, &ArchiveManager::get_block_by_seqno, account, seqno, std::move(promise));
 }
 
-void RootDb::get_max_masterchain_seqno(td::Promise<BlockSeqno> promise) {
-  td::actor::send_closure(archive_db_, &ArchiveManager::get_max_masterchain_seqno, std::move(promise));
+void RootDb::get_max_masterchain_seqno(bool force_catch_up, td::Promise<BlockSeqno> promise) {
+  td::actor::send_closure(archive_db_, &ArchiveManager::get_max_masterchain_seqno, force_catch_up, std::move(promise));
 }
 
 void RootDb::get_min_masterchain_seqno(td::Promise<BlockSeqno> promise) {
   td::actor::send_closure(archive_db_, &ArchiveManager::get_min_masterchain_seqno, std::move(promise));
 }
 
-void RootDb::try_catch_up_with_primary(td::Promise<td::Unit> promise) {
-  CHECK(mode_ == td::DbOpenMode::db_secondary);
+void RootDb::try_catch_up_with_primary(CatchUpMode mode, td::Promise<td::Unit> promise) {
+  if (mode_ != td::DbOpenMode::db_secondary || mode == CatchUpMode::None) {
+    promise.set_value(td::Unit());
+    return;
+  }
   td::MultiPromise mp;
   auto ig = mp.init_guard();
   ig.add_promise(std::move(promise));
 
-  td::actor::send_closure(archive_db_, &ArchiveManager::try_catch_up_with_primary, ig.get_promise());
+  td::actor::send_closure(archive_db_, &ArchiveManager::try_catch_up_with_primary, mode, ig.get_promise());
   td::actor::send_closure(cell_db_, &CellDb::try_catch_up_with_primary, ig.get_promise());
   td::actor::send_closure(state_db_, &StateDb::try_catch_up_with_primary, ig.get_promise());
 }

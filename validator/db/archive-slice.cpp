@@ -825,11 +825,7 @@ void ArchiveSlice::before_query() {
     td::actor::send_closure(archive_lru_, &ArchiveLru::on_query, actor_id(this), p_id_,
                             packages_.size() + ESTIMATED_DB_OPEN_FILES);
   }
-  if (mode_ == td::DbOpenMode::db_secondary) {
-    if (td::Timestamp::now().at() - last_catch_up_.at() > 1.0) {
-      try_catch_up_with_primary_impl().ensure();
-    }
-  }
+  try_catch_up_with_primary_impl(CatchUpMode::Throttled).ensure();
 }
 
 void ArchiveSlice::open_files() {
@@ -957,14 +953,13 @@ void ArchiveSlice::end_async_query() {
   }
 }
 
-void ArchiveSlice::try_catch_up_with_primary(td::Promise<td::Unit> promise) {
-  CHECK(mode_ == td::DbOpenMode::db_secondary);
+void ArchiveSlice::try_catch_up_with_primary(CatchUpMode mode, td::Promise<td::Unit> promise) {
   td::Status status;
   if (status_ == st_closed) {
     before_query();
     status = td::Status::OK();
   } else {
-    status = try_catch_up_with_primary_impl();
+    status = try_catch_up_with_primary_impl(mode);
   }
   if (status.is_error()) {
     promise.set_error(std::move(status));
@@ -973,7 +968,14 @@ void ArchiveSlice::try_catch_up_with_primary(td::Promise<td::Unit> promise) {
   }
 }
 
-td::Status ArchiveSlice::try_catch_up_with_primary_impl() {
+td::Status ArchiveSlice::try_catch_up_with_primary_impl(CatchUpMode mode) {
+  if (mode_ != td::DbOpenMode::db_secondary || mode == CatchUpMode::None) {
+    return td::Status::OK();
+  }
+  if (mode == CatchUpMode::Throttled && td::Timestamp::now().at() - last_catch_up_.at() <= secondary_catch_up_interval_) {
+    return td::Status::OK();
+  }
+
   CHECK(mode_ == td::DbOpenMode::db_secondary);
   
   TRY_STATUS(static_cast<td::RocksDbSecondary *>(kv_.get())->try_catch_up_with_primary());
@@ -1089,7 +1091,8 @@ void ArchiveSlice::set_async_mode(bool mode, td::Promise<td::Unit> promise) {
 ArchiveSlice::ArchiveSlice(td::uint32 archive_id, bool key_blocks_only, bool temp, bool finalized,
                            td::uint32 shard_split_depth, std::string db_root,
                            td::actor::ActorId<ArchiveLru> archive_lru, DbStatistics statistics,
-                           td::DbOpenMode mode, td::optional<std::string> secondary_workdir)
+                           td::DbOpenMode mode, td::optional<std::string> secondary_workdir,
+                           double secondary_catch_up_interval)
     : archive_id_(archive_id)
     , key_blocks_only_(key_blocks_only)
     , temp_(temp)
@@ -1100,7 +1103,8 @@ ArchiveSlice::ArchiveSlice(td::uint32 archive_id, bool key_blocks_only, bool tem
     , archive_lru_(std::move(archive_lru))
     , statistics_(statistics)
     , mode_(mode)
-    , secondary_workdir_(std::move(secondary_workdir)) {
+    , secondary_workdir_(std::move(secondary_workdir))
+    , secondary_catch_up_interval_(secondary_catch_up_interval) {
   db_path_ = PSTRING() << db_root_ << p_id_.path() << p_id_.name() << ".index";
 }
 

@@ -398,6 +398,7 @@ void CellDbIn::try_catch_up_with_primary(td::Promise<td::Unit> promise) {
   auto R = secondary->try_catch_up_with_primary();
   if (R.is_error()) {
     promise.set_error(R.move_as_error());
+    return;
   }
 
   boc_->set_loader(std::make_unique<vm::CellLoader>(cell_db_->snapshot())).ensure();
@@ -1153,6 +1154,10 @@ void CellDb::start_up() {
 }
 
 void CellDb::try_catch_up_with_primary(td::Promise<td::Unit> promise) {
+  if (mode_ != td::DbOpenMode::db_secondary) {
+    promise.set_value(td::Unit());
+    return;
+  }
   td::actor::send_closure(cell_db_, &CellDbIn::try_catch_up_with_primary, std::move(promise));
 }
 
