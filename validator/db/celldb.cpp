@@ -280,10 +280,8 @@ void CellDbIn::start_up() {
       break;
     }
     case td::DbOpenMode::db_secondary: {
-      auto secondary_working_dir = opts_->get_secondary_working_dir();
-      CHECK(secondary_working_dir);
-      td::RocksDbSecondaryOptions secondary_db_options{std::move(db_options), std::move(secondary_working_dir.value())};
-      auto rocks_db = std::make_shared<td::RocksDbSecondary>(td::RocksDbSecondary::open(path_, std::move(secondary_db_options)).move_as_ok());
+      auto rocks_db =
+          std::make_shared<td::RocksDbSecondary>(td::RocksDbSecondary::open(path_, std::move(db_options)).move_as_ok());
       rocks_db_ = rocks_db->raw_db();
       cell_db_ = std::move(rocks_db);
       break;

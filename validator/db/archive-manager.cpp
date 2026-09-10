@@ -707,8 +707,7 @@ td::actor::ActorOwn<ArchiveSlice> ArchiveManager::create_archive_slice(const Pac
                                                                        td::uint32 shard_split_depth) {
   auto actor = td::actor::create_actor<ArchiveSlice>(
       PSTRING() << "slice." << (id.temp ? "temp." : (id.key ? "key." : "")) << id.id, id.id, id.key, id.temp, false,
-      shard_split_depth, db_root_, archive_lru_.get(), statistics_, mode_, opts_->get_secondary_working_dir(),
-      opts_->get_secondary_catch_up_interval());
+      shard_split_depth, db_root_, archive_lru_.get(), statistics_, mode_, opts_->get_secondary_catch_up_interval());
   if (async_mode_) {
     td::actor::send_closure(actor, &ArchiveSlice::set_async_mode, true, [](td::Result<td::Unit>) {});
   }
@@ -946,13 +945,10 @@ void ArchiveManager::start_up() {
     case td::DbOpenMode::db_primary:
       index_ = std::static_pointer_cast<td::KeyValue>(std::make_shared<td::RocksDb>(td::RocksDb::open(db_root_ + "/files/globalindex", std::move(db_options)).move_as_ok()));
       break;
-    case td::DbOpenMode::db_secondary: {
-      auto secondary_working_dir = opts_->get_secondary_working_dir();
-      CHECK(secondary_working_dir);
-      td::RocksDbSecondaryOptions secondary_db_options{std::move(db_options), std::move(secondary_working_dir.value())};
-      index_ = std::static_pointer_cast<td::KeyValue>(std::make_shared<td::RocksDbSecondary>(td::RocksDbSecondary::open(db_root_ + "/files/globalindex", std::move(secondary_db_options)).move_as_ok()));
+    case td::DbOpenMode::db_secondary:
+      index_ = std::static_pointer_cast<td::KeyValue>(std::make_shared<td::RocksDbSecondary>(
+          td::RocksDbSecondary::open(db_root_ + "/files/globalindex", std::move(db_options)).move_as_ok()));
       break;
-    }
     case td::DbOpenMode::db_readonly:
       index_ = std::static_pointer_cast<td::KeyValue>(std::make_shared<td::RocksDbReadOnly>(td::RocksDbReadOnly::open(db_root_ + "/files/globalindex", std::move(db_options)).move_as_ok()));
       break;

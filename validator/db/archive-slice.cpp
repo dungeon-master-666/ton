@@ -728,9 +728,8 @@ void ArchiveSlice::before_query() {
         kv_ = std::make_unique<td::RocksDbReadOnly>(td::RocksDbReadOnly::open(db_path_, std::move(db_options)).move_as_ok());
         break;
       case td::DbOpenMode::db_secondary: {
-        CHECK(secondary_workdir_);
-        td::RocksDbSecondaryOptions secondary_db_options{std::move(db_options), secondary_workdir_.value()};
-        kv_ = std::make_unique<td::RocksDbSecondary>(td::RocksDbSecondary::open(db_path_, std::move(secondary_db_options)).move_as_ok());
+        kv_ = std::make_unique<td::RocksDbSecondary>(
+            td::RocksDbSecondary::open(db_path_, std::move(db_options)).move_as_ok());
         last_catch_up_ = td::Timestamp::now();
         break;
       }
@@ -1091,8 +1090,7 @@ void ArchiveSlice::set_async_mode(bool mode, td::Promise<td::Unit> promise) {
 ArchiveSlice::ArchiveSlice(td::uint32 archive_id, bool key_blocks_only, bool temp, bool finalized,
                            td::uint32 shard_split_depth, std::string db_root,
                            td::actor::ActorId<ArchiveLru> archive_lru, DbStatistics statistics,
-                           td::DbOpenMode mode, td::optional<std::string> secondary_workdir,
-                           double secondary_catch_up_interval)
+                           td::DbOpenMode mode, double secondary_catch_up_interval)
     : archive_id_(archive_id)
     , key_blocks_only_(key_blocks_only)
     , temp_(temp)
@@ -1103,7 +1101,6 @@ ArchiveSlice::ArchiveSlice(td::uint32 archive_id, bool key_blocks_only, bool tem
     , archive_lru_(std::move(archive_lru))
     , statistics_(statistics)
     , mode_(mode)
-    , secondary_workdir_(std::move(secondary_workdir))
     , secondary_catch_up_interval_(secondary_catch_up_interval) {
   db_path_ = PSTRING() << db_root_ << p_id_.path() << p_id_.name() << ".index";
 }

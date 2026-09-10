@@ -32,15 +32,11 @@ class Statistics;
 
 namespace td {
 
-struct RocksDbSecondaryOptions: public RocksDbOptions {
-  std::string secondary_logs_path;
-};
-
 class RocksDbSecondary : public KeyValue {
  public:
   static Status destroy(Slice path);
   RocksDbSecondary clone() const;
-  static Result<RocksDbSecondary> open(std::string path, RocksDbSecondaryOptions options = {});
+  static Result<RocksDbSecondary> open(std::string path, RocksDbOptions options = {});
 
   Status try_catch_up_with_primary();
 
@@ -78,7 +74,7 @@ class RocksDbSecondary : public KeyValue {
 
  private:
   std::shared_ptr<rocksdb::DB> db_;
-  RocksDbSecondaryOptions options_;
+  RocksDbOptions options_;
 
   class UnreachableDeleter {
    public:
@@ -88,6 +84,6 @@ class RocksDbSecondary : public KeyValue {
     }
   };
 
-  explicit RocksDbSecondary(std::shared_ptr<rocksdb::DB> db, RocksDbSecondaryOptions options);
+  explicit RocksDbSecondary(std::shared_ptr<rocksdb::DB> db, RocksDbOptions options);
 };
 }  // namespace td

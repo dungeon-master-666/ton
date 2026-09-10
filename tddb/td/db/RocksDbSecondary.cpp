@@ -15,6 +15,7 @@
 #include "td/db/RocksDbSecondary.h"
 
 #include "rocksdb/db.h"
+#include "rocksdb/env.h"
 #include "rocksdb/filter_policy.h"
 #include "rocksdb/statistics.h"
 #include "rocksdb/table.h"
@@ -23,6 +24,14 @@
 
 namespace td {
 namespace {
+class NullLogger final : public rocksdb::Logger {
+ public:
+  void Logv(const char *, va_list) override {
+  }
+  void Logv(rocksdb::InfoLogLevel, const char *, va_list) override {
+  }
+};
+
 static Status from_rocksdb(rocksdb::Status status) {
   if (status.ok()) {
     return Status::OK();
@@ -55,7 +64,7 @@ RocksDbSecondary RocksDbSecondary::clone() const {
   return RocksDbSecondary{db_, options_};
 }
 
-Result<RocksDbSecondary> RocksDbSecondary::open(std::string path, RocksDbSecondaryOptions options) {
+Result<RocksDbSecondary> RocksDbSecondary::open(std::string path, RocksDbOptions options) {
   rocksdb::DB *db;
   {
     rocksdb::Options db_options;
@@ -92,17 +101,16 @@ Result<RocksDbSecondary> RocksDbSecondary::open(std::string path, RocksDbSeconda
     db_options.max_background_flushes = 2;
     db_options.bytes_per_sync = 1 << 20;
     db_options.writable_file_max_buffer_size = 2 << 14;
-    db_options.keep_log_file_num = 1;
     db_options.statistics = options.statistics;
-    db_options.max_log_file_size = 100 << 20;
+    // A null info_log creates RocksDB's default file logger. Supply a no-op
+    // logger instead: secondary reads need no on-disk state of their own.
+    db_options.info_log = std::make_shared<NullLogger>();
     rocksdb::ColumnFamilyOptions cf_options(db_options);
     std::vector<rocksdb::ColumnFamilyDescriptor> column_families;
     column_families.push_back(rocksdb::ColumnFamilyDescriptor(rocksdb::kDefaultColumnFamilyName, cf_options));
     std::vector<rocksdb::ColumnFamilyHandle *> handles;
-    std::string secondary_path = path;
-    std::replace(secondary_path.begin(), secondary_path.end(), TD_DIR_SLASH, '_');
-    TRY_STATUS(from_rocksdb(
-      rocksdb::DB::OpenAsSecondary(db_options, path, options.secondary_logs_path + TD_DIR_SLASH + secondary_path, column_families, &handles, &db)));
+    // OpenAsSecondary does not use secondary_path when info_log is supplied.
+    TRY_STATUS(from_rocksdb(rocksdb::DB::OpenAsSecondary(db_options, path, "", column_families, &handles, &db)));
     CHECK(handles.size() == 1);
     // i can delete the handle since DBImpl is always holding a reference to
     // default column family
@@ -276,7 +284,7 @@ Status RocksDbSecondary::end_snapshot() {
   return td::Status::OK();
 }
 
-RocksDbSecondary::RocksDbSecondary(std::shared_ptr<rocksdb::DB> db, RocksDbSecondaryOptions options)
+RocksDbSecondary::RocksDbSecondary(std::shared_ptr<rocksdb::DB> db, RocksDbOptions options)
     : db_(std::move(db)), options_(std::move(options)) {
 }
 }  // namespace td
