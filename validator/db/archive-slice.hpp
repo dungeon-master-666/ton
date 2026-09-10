@@ -106,9 +106,8 @@ class ArchiveLru;
 class ArchiveSlice : public td::actor::Actor {
  public:
   ArchiveSlice(td::uint32 archive_id, bool key_blocks_only, bool temp, bool finalized, td::uint32 shard_split_depth,
-               std::string db_root, td::actor::ActorId<ArchiveLru> archive_lru, DbStatistics statistics = {}, 
-               td::DbOpenMode mode = td::DbOpenMode::db_primary, td::optional<std::string> secondary_workdir = {},
-               double secondary_catch_up_interval = 1.0);
+               std::string db_root, td::actor::ActorId<ArchiveLru> archive_lru, DbStatistics statistics = {},
+               td::DbOpenMode mode = td::DbOpenMode::db_primary, double secondary_catch_up_interval = 1.0);
 
   void tear_down() override;
 
@@ -199,7 +198,6 @@ class ArchiveSlice : public td::actor::Actor {
   DbStatistics statistics_;
   std::unique_ptr<td::KeyValue> kv_;
   td::DbOpenMode mode_;
-  td::optional<std::string> secondary_workdir_;
   double secondary_catch_up_interval_{1.0};
   td::Timestamp last_catch_up_;
 
