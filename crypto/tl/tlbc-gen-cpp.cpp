@@ -87,10 +87,12 @@ void init_forbidden_cpp_idents() {
   f.insert("TLB");
   f.insert("TLB_Complex");
   f.insert("PrettyPrinter");
+  f.insert("JsonPrinter");
   std::set<std::string>& l = local_forbidden_cpp_idents;
   l.insert("cons_len");
   l.insert("cons_len_exact");
   l.insert("cons_tag");
+  l.insert("cons_name");
   l.insert("skip");
   l.insert("validate_skip");
   l.insert("get_size");
@@ -2214,9 +2216,9 @@ bool CppTypeCode::output_print_simple_field(std::ostream& os, const Field& field
       os << ")";
       return true;
     case ct_bool:
-      os << "pp.fetch_bool_field(cs, ";
+      os << "pp.fetch_bool_field(cs";
       if (!field_name.empty()) {
-        os << "\"" << field_name << '"';
+        os << ", \"" << field_name << '"';
       }
       os << ")";
       return true;
@@ -2379,7 +2381,7 @@ void CppTypeCode::generate_print_cons_method(std::ostream& os, std::string nl, i
 
 void CppTypeCode::generate_print_method(std::ostream& os, int options, const char* printer_type) {
   bool ret_ext = options & 2;
-  if (!ret_ext && std::string(printer_type) == "PrettyPrinter") {
+  if (!ret_ext && std::string{printer_type} == "PrettyPrinter") {
     std::string name = type.get_name();
     if (name == "HashmapE") {
       os << "\nbool " << cpp_type_class_name << "::print_skip(PrettyPrinter& pp, vm::CellSlice& cs) const {\n"
@@ -3153,10 +3155,10 @@ void CppTypeCode::generate_header(std::ostream& os, int options) {
     records[i].declare_record_pack(os, "  ", 26);
   }
   os << "  bool print_skip(PrettyPrinter& pp, vm::CellSlice& cs) const override;\n";
-  os << "  bool print_skip(JsonPrinter& pp, vm::CellSlice& cs) const override;\n";
+  os << "  bool print_skip(::tlb::JsonPrinter& pp, vm::CellSlice& cs) const override;\n";
   if (ret_params) {
     os << "  bool print_skip(PrettyPrinter& pp, vm::CellSlice& cs" << skip_extra_args << ") const;\n";
-    os << "  bool print_skip(JsonPrinter& pp, vm::CellSlice& cs" << skip_extra_args << ") const;\n";
+    os << "  bool print_skip(::tlb::JsonPrinter& pp, vm::CellSlice& cs" << skip_extra_args << ") const;\n";
   }
   os << "  std::ostream& print_type(std::ostream& os) const override {";
   generate_print_type_body(os, "\n    ");
@@ -3220,10 +3222,10 @@ void CppTypeCode::generate_body(std::ostream& os, int options) {
     generate_pack_method(os, rec, 26);
   }
   generate_print_method(os, options + 1, "PrettyPrinter");
-  generate_print_method(os, options + 1, "JsonPrinter");
+  generate_print_method(os, options + 1, "::tlb::JsonPrinter");
   if (ret_params) {
     generate_print_method(os, options + 3, "PrettyPrinter");
-    generate_print_method(os, options + 3, "JsonPrinter");
+    generate_print_method(os, options + 3, "::tlb::JsonPrinter");
   }
   if (!cpp_type_var_name.empty()) {
     os << "\nconst " << cpp_type_class_name << " " << cpp_type_var_name << ";";

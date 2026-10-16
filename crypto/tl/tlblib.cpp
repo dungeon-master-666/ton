@@ -16,14 +16,14 @@
 
     Copyright 2017-2020 Telegram Systems LLP
 */
-#include <set>
 #include "td/utils/base64.h"
+#include "td/utils/JsonBuilder.h"
 #include "td/utils/utf8.h"
 #include "vm/cells/Cell.h"
 #include "vm/cells/CellBuilder.h"
+#include "vm/excno.hpp"
 #include "tl/tlblib.hpp"
 #include <iomanip>
-#include <vector>
 
 
 #include "vm/dict.h"
@@ -163,109 +163,77 @@ bool Bits::print_skip(JsonPrinter& pp, vm::CellSlice& cs) const {
   }
 }
 
-bool SnakeString::skip(vm::CellSlice& cs) const {
-  vm::CellSlice current = cs;
-  
-  while (true) {
-    // consume all bits in current cell
-    if (!current.advance(current.size())) {
-      return false;
-    }
-    if (current.size_refs() > 1) {
-      return false;  // snake format can't have more than 1 ref
-    }
-    if (current.size_refs() == 0) {
-      cs = current;
-      return true;
-    }
-    // to next cell
-    auto ref = current.fetch_ref();
-    if (ref.is_null()) {
-      return false;
-    }
-    if (!current.load(vm::NoVm{}, ref)) {
-      return false;
-    }
-  }
-}
-
-bool SnakeString::validate_skip(int* ops, vm::CellSlice& cs, bool weak) const {
-  if (ops && *ops <= 0) {
-    return false;
-  }
-  vm::CellSlice current = cs;
-  int cells_processed = 0;
-  while (true) {
-    if (ops) {
-      (*ops)--;
-      if (*ops < 0) {
+namespace {
+// The snake occupies the remaining bytes and optional single reference in its
+// root slice. Validate children without replacing the caller's root cursor.
+bool consume_snake(vm::CellSlice& root, int* ops, std::vector<unsigned char>* bytes) {
+  try {
+    vm::CellSlice current{root};
+    for (int cells = 0; cells < 1000; ++cells) {
+      if (ops) {
+        if (*ops <= 0) {
+          return false;
+        }
+        --*ops;
+      }
+      if (!current.is_valid() || current.is_special() || current.size() % 8 != 0 || current.size_refs() > 1) {
+        return false;
+      }
+      if (bytes) {
+        while (current.size() > 0) {
+          // fetch_ulong advances the slice cursor; fetch_octet only advances its bit cache.
+          const auto octet = current.fetch_ulong(8);
+          if (octet == vm::CellSlice::fetch_ulong_eof) {
+            return false;
+          }
+          bytes->push_back(static_cast<unsigned char>(octet));
+        }
+      } else if (!current.advance(current.size())) {
+        return false;
+      }
+      if (current.size_refs() == 0) {
+        vm::CellSlice finished{root};
+        if (!finished.advance(finished.size()) || (finished.size_refs() && finished.fetch_ref().is_null())) {
+          return false;
+        }
+        root = std::move(finished);
+        return true;
+      }
+      auto ref = current.fetch_ref();
+      if (ref.is_null() || !current.load(vm::NoVm{}, std::move(ref))) {
         return false;
       }
     }
-    cells_processed++;
-    if (cells_processed > 1000) {
-      return false;
-    }
-    if (!current.advance(current.size())) {
-      return false;
-    }
-    if (current.size_refs() > 1) {
-      return false;
-    }
-    if (current.size_refs() == 0) {
-      cs = current;
-      return true;
-    }
-    auto ref = current.fetch_ref();
-    if (ref.is_null()) {
-      return false;
-    }
-    if (!current.load(vm::NoVm{}, ref)) {
-      return false;
-    }
+  } catch (vm::VmError&) {
+    return false;
+  } catch (vm::VmVirtError&) {
+    return false;
+  } catch (vm::VmNoGas&) {
+    return false;
   }
+  return false;
+}
+}  // namespace
+
+int SnakeString::get_size(const vm::CellSlice& cs) const {
+  vm::CellSlice copy{cs};
+  return skip(copy) ? copy.subtract_base_ext(cs) : -1;
+}
+
+bool SnakeString::skip(vm::CellSlice& cs) const {
+  return consume_snake(cs, nullptr, nullptr);
+}
+
+bool SnakeString::validate_skip(int* ops, vm::CellSlice& cs, bool) const {
+  return consume_snake(cs, ops, nullptr);
 }
 
 td::Result<std::vector<unsigned char>> SnakeString::load_snake_binary(vm::CellSlice& cs) const {
   std::vector<unsigned char> data;
-  vm::CellSlice current = cs;
-  
-  while (true) {
-    unsigned bits_available = current.size();
-    if (bits_available > 0) {
-      while (bits_available >= 8) {
-        int byte_val = current.fetch_octet();
-        if (byte_val < 0) {
-          return td::Status::Error("failed to fetch octet from snake cell");
-        }
-        data.push_back(static_cast<unsigned char>(byte_val));
-        bits_available -= 8;
-      }
-      if (bits_available > 0) {
-        unsigned long long remaining = current.fetch_ulong(bits_available);
-        if (remaining == vm::CellSlice::fetch_ulong_eof) {
-          return td::Status::Error("failed to fetch remaining bits from snake cell");
-        }
-        // shift remaining to form a byte
-        unsigned char byte_val = static_cast<unsigned char>(remaining << (8 - bits_available));
-        data.push_back(byte_val);
-      }
-    }
-    if (current.size_refs() > 1) {
-      return td::Status::Error("snake cell has more than one reference");
-    }
-    if (current.size_refs() == 0) {
-      cs = current;
-      return data;
-    }
-    auto ref = current.fetch_ref();
-    if (ref.is_null()) {
-      return td::Status::Error("snake cell reference is null");
-    }
-    if (!current.load(vm::NoVm{}, ref)) {
-      return td::Status::Error("failed to load snake cell reference");
-    }
+  if (!consume_snake(cs, nullptr, &data)) {
+    return td::Status::Error("invalid or oversized byte-aligned snake string");
   }
+  return data;
 }
 
 td::Result<std::string> SnakeString::load_snake_string(vm::CellSlice& cs) const {
@@ -421,12 +389,35 @@ bool TLB::print_ref(JsonPrinter& pp, Ref<vm::Cell> cell_ref) const {
   if (!pp.register_recursive_call()) {
     return pp.fail("too many recursive calls while printing a TL-B value");
   }
-  bool is_special;
-  auto cs = load_cell_slice_special(std::move(cell_ref), is_special);
-  if (is_special) {
-    return print_special(pp, cs);
-  } else {
-    return print_skip(pp, cs);
+  try {
+    bool is_special;
+    auto cs = load_cell_slice_special(cell_ref, is_special);
+    if (always_special() != is_special) {
+      return pp.fail("incorrect TL-B cell kind");
+    }
+    if (is_special) {
+      int ops = default_validate_max_cells;
+      if (!validate_skip(&ops, cs) || !cs.empty_ext()) {
+        return pp.fail("invalid special TL-B cell");
+      }
+      auto boc = vm::std_boc_serialize(cell_ref);
+      return boc.is_ok() ? pp.out(td::base64_encode(boc.move_as_ok().as_slice()))
+                         : pp.fail("failed to serialize special cell");
+    }
+    if (!print_skip(pp, cs)) {
+      return pp.fail("invalid TL-B value");
+    }
+    return cs.empty_ext() || pp.fail("extra data in cell");
+  } catch (vm::VmError&) {
+    return pp.fail("failed to load TL-B cell");
+  } catch (vm::VmVirtError&) {
+    return pp.fail("failed to load virtualized TL-B cell");
+  } catch (vm::VmNoGas&) {
+    return pp.fail("out of gas while printing TL-B cell");
+  } catch (vm::CellBuilder::CellCreateError&) {
+    return pp.fail("failed to build TL-B cell");
+  } catch (vm::CellBuilder::CellWriteError&) {
+    return pp.fail("failed to build TL-B cell");
   }
 }
 
@@ -760,6 +751,135 @@ TLB::ValidateCache TLB::ValidateCache::create_for_type(const TLB* type) {
       }};
 }
 
+namespace {
+
+bool json_digit(char c) {
+  return c >= '0' && c <= '9';
+}
+
+int json_hex(char c) {
+  if (json_digit(c)) {
+    return c - '0';
+  }
+  if (c >= 'a' && c <= 'f') {
+    return c - 'a' + 10;
+  }
+  return c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1;
+}
+
+// The td JSON decoder accepts nonstandard numeric literals and escapes. Check
+// lexical rules on the original text before letting it validate the structure.
+bool valid_json_lexemes(const std::string& json) {
+  for (size_t i = 0; i < json.size();) {
+    char c = json[i];
+    if (c == '"') {
+      ++i;
+      bool closed = false;
+      while (i < json.size()) {
+        c = json[i++];
+        if (c == '"') {
+          closed = true;
+          break;
+        }
+        if (static_cast<unsigned char>(c) < 0x20) {
+          return false;
+        }
+        if (c != '\\') {
+          continue;
+        }
+        if (i == json.size()) {
+          return false;
+        }
+        c = json[i++];
+        if (c == '"' || c == '\\' || c == '/' || c == 'b' || c == 'f' || c == 'n' || c == 'r' || c == 't') {
+          continue;
+        }
+        if (c != 'u' || json.size() - i < 4) {
+          return false;
+        }
+        unsigned codepoint = 0;
+        for (int j = 0; j < 4; ++j) {
+          int digit = json_hex(json[i++]);
+          if (digit < 0) {
+            return false;
+          }
+          codepoint = (codepoint << 4) | digit;
+        }
+        if (codepoint >= 0xdc00 && codepoint <= 0xdfff) {
+          return false;
+        }
+        if (codepoint >= 0xd800 && codepoint <= 0xdbff) {
+          if (json.size() - i < 6 || json[i++] != '\\' || json[i++] != 'u') {
+            return false;
+          }
+          unsigned low = 0;
+          for (int j = 0; j < 4; ++j) {
+            int digit = json_hex(json[i++]);
+            if (digit < 0) {
+              return false;
+            }
+            low = (low << 4) | digit;
+          }
+          if (low < 0xdc00 || low > 0xdfff) {
+            return false;
+          }
+        }
+      }
+      if (!closed) {
+        return false;
+      }
+    } else if (c == '-' || c == '+' || c == '.' || json_digit(c)) {
+      if (c == '-') {
+        ++i;
+      }
+      if (i == json.size() || !json_digit(json[i])) {
+        return false;
+      }
+      if (json[i] == '0') {
+        ++i;
+      } else {
+        do {
+          ++i;
+        } while (i < json.size() && json_digit(json[i]));
+      }
+      if (i < json.size() && json[i] == '.') {
+        ++i;
+        if (i == json.size() || !json_digit(json[i])) {
+          return false;
+        }
+        do {
+          ++i;
+        } while (i < json.size() && json_digit(json[i]));
+      }
+      if (i < json.size() && (json[i] == 'e' || json[i] == 'E')) {
+        ++i;
+        if (i < json.size() && (json[i] == '+' || json[i] == '-')) {
+          ++i;
+        }
+        if (i == json.size() || !json_digit(json[i])) {
+          return false;
+        }
+        do {
+          ++i;
+        } while (i < json.size() && json_digit(json[i]));
+      }
+      // A number must end at a JSON value delimiter, not an additional token.
+      if (i < json.size() && json[i] != ',' && json[i] != ']' && json[i] != '}' && json[i] != ' ' &&
+          json[i] != '\t' && json[i] != '\n' && json[i] != '\r') {
+        return false;
+      }
+    } else {
+      if (static_cast<unsigned char>(c) < 0x20 && c != ' ' && c != '\t' && c != '\n' && c != '\r') {
+        return false;
+      }
+      ++i;
+    }
+  }
+  return true;
+}
+
+}  // namespace
+
 std::string JsonPrinter::escape_string(const std::string& str) {
   std::string result;
   result.reserve(str.size() + 10);
@@ -787,209 +907,183 @@ std::string JsonPrinter::escape_string(const std::string& str) {
   return result;
 }
 
-bool JsonPrinter::open(std::string msg) {
-  // if (buffer().empty() && level_ == 0) {
-  //   buffer() += "{";
-  // }
-  if (msg.empty())
-    buffer() += "{";
-  else {
-    // if (after_semicolon_) {
-    buffer() += "{\"@type\":\"" + escape_string(msg) + "\"";
-    // }
-    // else {
-    //   if (!first_field_) buffer() += ",";
-    //   buffer() += "\"" + escape_string(msg) + "\":" + "{\"@type\":\"" + escape_string(msg) + "\"";
-    // }
+bool JsonPrinter::begin_value() {
+  if (failed_) {
+    return false;
   }
-  level_++;
-  first_field_ = false;
-  if (msg.empty()) first_field_ = true;
-  after_semicolon_ = false;
+  if (objects_.empty()) {
+    if (root_started_ || !buffer().empty()) {
+      return fail("multiple JSON root values");
+    }
+    root_started_ = true;
+  } else {
+    if (!objects_.back().pending_value && !field()) {
+      return false;
+    }
+    objects_.back().pending_value = false;
+  }
   return true;
+}
+
+bool JsonPrinter::open(std::string msg) {
+  if (!td::check_utf8(msg)) {
+    return fail("invalid UTF-8 type name");
+  }
+  if (!begin_value()) {
+    return false;
+  }
+  buffer() += '{';
+  objects_.emplace_back();
+  return msg.empty() || (field("@type") && out(std::move(msg)));
 }
 
 bool JsonPrinter::close() {
   return close("");
 }
 
-bool JsonPrinter::close(std::string msg) {
-  level_--;
-  if (level_ < 0) {
-    failed_ = true;
-    return false;
+bool JsonPrinter::close(std::string) {
+  if (failed_ || objects_.empty() || objects_.back().pending_value) {
+    return fail("unbalanced JSON object");
   }
-
-  buffer() += "}";
-  first_field_ = false;
-  after_semicolon_ = false;
-  // if (level_ == 0) { // last ever
-  //   buffer() += "}";
-  // }
+  buffer() += '}';
+  objects_.pop_back();
   return true;
 }
 
 bool JsonPrinter::field(std::string name) {
-  if (!first_field_) buffer() += ",";
+  if (!td::check_utf8(name)) {
+    return fail("invalid UTF-8 field name");
+  }
+  if (failed_ || objects_.empty() || objects_.back().pending_value) {
+    return fail("JSON field without object or value");
+  }
+  auto& object = objects_.back();
+  if (!object.names.insert(name).second) {
+    return fail("duplicate JSON field");
+  }
+  if (!object.first_field) {
+    buffer() += ',';
+  }
   buffer() += "\"" + escape_string(name) + "\":";
-  first_field_ = false;
-  after_semicolon_ = true;
+  object.first_field = false;
+  object.pending_value = true;
   return true;
 }
 
 bool JsonPrinter::field() {
-  // return true;
-  return field("");
+  if (objects_.empty()) {
+    return fail("unnamed field without object");
+  }
+  auto& object = objects_.back();
+  std::string name;
+  do {
+    name = "@" + std::to_string(object.unnamed_index++);
+  } while (object.names.count(name));
+  return field(std::move(name));
 }
 
 bool JsonPrinter::field_int(long long value) {
-  after_semicolon_ = false;
-  return field_int(value, "");
+  return out_int(value);
 }
 
 bool JsonPrinter::field_int(long long value, std::string name) {
-  after_semicolon_ = false;
-  if (!name.empty()) field(name);
-  buffer() += "\"" + std::to_string(value) + "\"";
-  return true;
+  return (name.empty() || field(std::move(name))) && out_int(value);
 }
 
 bool JsonPrinter::field_uint(unsigned long long value) {
-  after_semicolon_ = false;
-  return field_uint(value, "");
+  return out_uint(value);
 }
 
 bool JsonPrinter::field_uint(unsigned long long value, std::string name) {
-  after_semicolon_ = false;
-  if (!name.empty()) field(name);
-  buffer() += "\"" + std::to_string(value) + "\"";
-  return true;
+  return (name.empty() || field(std::move(name))) && out_uint(value);
 }
 
 bool JsonPrinter::fetch_bits_field(vm::CellSlice& cs, int n) {
-  if (!after_semicolon_) field("");
-  after_semicolon_ = false;
-  if (!cs.have(n)) return false;
-  auto bits = cs.fetch_bits(n);
-  buffer() += "\"" + bits.to_hex() + "\"";
-  return true;
+  return cs.have(n) ? out(cs.fetch_bits(n).to_hex()) : fail("not enough bits");
 }
 
 bool JsonPrinter::fetch_bits_field(vm::CellSlice& cs, int n, std::string name) {
-  after_semicolon_ = false;
-  if (!name.empty()) field(name);
-  return fetch_bits_field(cs, n);
+  return cs.have(n) && (name.empty() || field(std::move(name))) ? fetch_bits_field(cs, n)
+                                                              : fail("not enough bits or invalid field");
 }
 
 bool JsonPrinter::fetch_int_field(vm::CellSlice& cs, int n) {
-  if (!after_semicolon_) field("");
-  after_semicolon_ = false;
-  if (!cs.have(n)) return false;
-  long long value = cs.fetch_long(n);
-  return field_int(value);
+  return cs.have(n) ? out_int(cs.fetch_long(n)) : fail("not enough bits");
 }
 
 bool JsonPrinter::fetch_int_field(vm::CellSlice& cs, int n, std::string name) {
-  after_semicolon_ = false;
-  if (!name.empty()) field(name);
-  return fetch_int_field(cs, n);
+  return cs.have(n) && (name.empty() || field(std::move(name))) ? fetch_int_field(cs, n)
+                                                              : fail("not enough bits or invalid field");
 }
 
 bool JsonPrinter::fetch_uint_field(vm::CellSlice& cs, int n) {
-  if (!after_semicolon_) field("");
-  after_semicolon_ = false;
-  if (!cs.have(n)) return false;
-  unsigned long long value = cs.fetch_ulong(n);
-  return field_uint(value);
+  return cs.have(n) ? out_uint(cs.fetch_ulong(n)) : fail("not enough bits");
 }
 
 bool JsonPrinter::fetch_uint_field(vm::CellSlice& cs, int n, std::string name) {
-  after_semicolon_ = false;
-  if (!name.empty()) field(name);
-  return fetch_uint_field(cs, n);
+  return cs.have(n) && (name.empty() || field(std::move(name))) ? fetch_uint_field(cs, n)
+                                                              : fail("not enough bits or invalid field");
 }
 
 bool JsonPrinter::fetch_int256_field(vm::CellSlice& cs, int n) {
-  if (!after_semicolon_) field("");
-  after_semicolon_ = false;
-  if (!cs.have(n)) return false;
-  auto value = cs.prefetch_int256(n, true);
-  if (value.not_null()) {
-    std::ostringstream oss;
-    oss << value;
-    buffer() += "\"" + oss.str() + "\"";
-    cs.fetch_int256(n, true);
-    return true;
+  if (!cs.have(n)) {
+    return fail("not enough bits");
   }
-  return false;
+  return out_integer(cs.fetch_int256(n, true));
 }
 
 bool JsonPrinter::fetch_int256_field(vm::CellSlice& cs, int n, std::string name) {
-  after_semicolon_ = false;
-  if (!name.empty()) field(name);
-  return fetch_int256_field(cs, n);
+  return cs.have(n) && (name.empty() || field(std::move(name))) ? fetch_int256_field(cs, n)
+                                                              : fail("not enough bits or invalid field");
 }
 
 bool JsonPrinter::fetch_uint256_field(vm::CellSlice& cs, int n) {
-  if (!after_semicolon_) field("");
-  after_semicolon_ = false;
-  if (!cs.have(n)) return false;
-  auto value = cs.prefetch_int256(n, false);
-  if (value.not_null()) {
-    std::ostringstream oss;
-    oss << value;
-    buffer() += "\"" + oss.str() + "\"";
-    cs.fetch_int256(n, false);
-    return true;
+  if (!cs.have(n)) {
+    return fail("not enough bits");
   }
-  return false;
+  return out_integer(cs.fetch_int256(n, false));
 }
 
 bool JsonPrinter::fetch_uint256_field(vm::CellSlice& cs, int n, std::string name) {
-  after_semicolon_ = false;
-  if (!name.empty()) field(name);
-  return fetch_uint256_field(cs, n);
+  return cs.have(n) && (name.empty() || field(std::move(name))) ? fetch_uint256_field(cs, n)
+                                                              : fail("not enough bits or invalid field");
 }
 
 bool JsonPrinter::fetch_bool_field(vm::CellSlice& cs) {
-  if (!after_semicolon_) field("");
-  after_semicolon_ = false;
-  return cs.have(1) && write_raw(cs.fetch_ulong(1) ? "true" : "false");
+  return cs.have(1) ? write_raw(cs.fetch_ulong(1) ? "true" : "false") : fail("not enough bits");
 }
 
 bool JsonPrinter::fetch_bool_field(vm::CellSlice& cs, std::string name) {
-  after_semicolon_ = false;
-  if (!name.empty()) field(name);
-  return fetch_bool_field(cs);
+  return cs.have(1) && (name.empty() || field(std::move(name))) ? fetch_bool_field(cs)
+                                                              : fail("not enough bits or invalid field");
 }
 
 bool JsonPrinter::out(std::string str) {
-  after_semicolon_ = false;
+  if (!td::check_utf8(str)) {
+    return fail("invalid UTF-8 string");
+  }
+  if (!begin_value()) {
+    return false;
+  }
   buffer() += "\"" + escape_string(str) + "\"";
   return true;
 }
 
 bool JsonPrinter::out_int(long long value) {
-  after_semicolon_ = false;
-  buffer() += "\"" + std::to_string(value) + "\"";
-  return true;
+  return out(std::to_string(value));
 }
 
 bool JsonPrinter::out_uint(unsigned long long value) {
-  after_semicolon_ = false;
-  buffer() += "\"" + std::to_string(value) + "\"";
-  return true;
+  return out(std::to_string(value));
 }
 
 bool JsonPrinter::out_integer(td::RefInt256 value) {
-  after_semicolon_ = false;
-  if (value.not_null()) {
-    std::ostringstream oss;
-    oss << value;
-    buffer() += "\"" + oss.str() + "\"";
-    return true;
+  if (value.is_null()) {
+    return fail("invalid integer");
   }
-  return false;
+  std::ostringstream oss;
+  oss << value;
+  return out(oss.str());
 }
 
 bool JsonPrinter::cons(std::string str) {
@@ -997,35 +1091,50 @@ bool JsonPrinter::cons(std::string str) {
 }
 
 bool JsonPrinter::register_recursive_call() {
-  return limit_--;
+  if (limit_ <= 0) {
+    return false;
+  }
+  --limit_;
+  return true;
 }
 
 void JsonPrinter::set_limit(int new_limit) {
-  if (new_limit > 0) {
+  if (new_limit >= 0) {
     limit_ = new_limit;
   }
 }
 
 bool JsonPrinter::fail(std::string msg) {
-  buffer() += "\"<FATAL: " + escape_string(msg) + ">\"";
-  level_++;
-  while (level_ > 0) {
-    buffer() += "}";
-    level_--;
+  if (!failed_) {
+    if (!td::check_utf8(msg)) {
+      msg = "invalid TL-B value";
+    }
+    buffer() = "{\"@error\":\"" + escape_string(msg) + "\"}";
+    objects_.clear();
+    root_started_ = true;
+    failed_ = true;
   }
-  failed_ = true;
   return false;
 }
 
-
 bool JsonPrinter::fail_unless(bool res) {
-  if (!res) {
-    failed_ = true;
-  }
-  return res;
+  return res || fail("invalid TL-B value");
 }
 
 bool JsonPrinter::write_raw(const std::string& json) {
+  if (!td::check_utf8(json)) {
+    return fail("invalid UTF-8 raw JSON value");
+  }
+  if (!valid_json_lexemes(json)) {
+    return fail("invalid raw JSON value");
+  }
+  std::string copy = json;
+  if (td::json_decode(td::MutableSlice(copy)).is_error()) {
+    return fail("invalid raw JSON value");
+  }
+  if (!begin_value()) {
+    return false;
+  }
   buffer() += json;
   return true;
 }

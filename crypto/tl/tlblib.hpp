@@ -20,6 +20,8 @@
 #include <functional>
 #include <iostream>
 #include <map>
+#include <set>
+#include <vector>
 
 #include "td/utils/base64.h"
 #include "vm/cellslice.h"
@@ -626,13 +628,23 @@ struct PrettyPrinter {
   }
 };
 
+bool print_hashmap(PrettyPrinter& pp, vm::CellSlice& cs, unsigned n, const TLB& dict_type, const TLB& value_type,
+                    bool non_empty);
+bool print_hashmap_aug(PrettyPrinter& pp, vm::CellSlice& cs, unsigned n, const TLB& dict_type, const TLB& value_type,
+                        const TLB& aug_type, bool non_empty);
 class JsonPrinter {
 private:
+  struct ObjectState {
+    bool first_field = true;
+    bool pending_value = false;
+    unsigned unnamed_index = 0;
+    std::set<std::string> names;
+  };
+
   std::string* output_;
   std::string internal_buffer_;
-  int level_ = 0;
-  bool first_field_ = true;
-  bool after_semicolon_ = false;
+  std::vector<ObjectState> objects_;
+  bool root_started_ = false;
   bool failed_ = false;
   int limit_ = default_print_limit;
 
@@ -644,6 +656,7 @@ private:
   std::string& buffer() {
     return output_ ? *output_ : internal_buffer_;
   }
+  bool begin_value();
 
 public:
   JsonPrinter(std::string* output = nullptr) : output_(output) {}
@@ -679,19 +692,19 @@ public:
   bool register_recursive_call();
 
   bool fail_unless(bool res);
-  bool ok() const { return !failed_; }
+  bool ok() const { return !failed_ && root_started_ && objects_.empty(); }
   void set_limit(int new_limit);
 
-  std::string get_json() const { return output_ ? *output_ : internal_buffer_; }
+  std::string get_json() const {
+    if (failed_) {
+      return output_ ? *output_ : internal_buffer_;
+    }
+    return ok() ? (output_ ? *output_ : internal_buffer_) : "{\"@error\":\"incomplete JSON output\"}";
+  }
   bool write_raw(const std::string& json);
 
   bool fail(std::string msg);
 };
-
-bool print_hashmap(PrettyPrinter& pp, vm::CellSlice& cs, unsigned n, const TLB& dict_type, const TLB& value_type,
-                   bool non_empty);
-bool print_hashmap_aug(PrettyPrinter& pp, vm::CellSlice& cs, unsigned n, const TLB& dict_type, const TLB& value_type,
-                       const TLB& aug_type, bool non_empty);
 
 }  // namespace tlb
 
@@ -1060,9 +1073,7 @@ struct Bits final : TLB {
 };
 
 struct SnakeString final : TLB {
-  int get_size(const vm::CellSlice& cs) const override {
-    return -1;  // snake format has variable size
-  }
+  int get_size(const vm::CellSlice& cs) const override;
   bool skip(vm::CellSlice& cs) const override;
   bool validate_skip(int* ops, vm::CellSlice& cs, bool weak = false) const override;
   std::ostream& print_type(std::ostream& os) const override {
@@ -1070,7 +1081,7 @@ struct SnakeString final : TLB {
   }
   td::Result<std::string> load_snake_string(vm::CellSlice& cs) const;
   td::Result<std::vector<unsigned char>> load_snake_binary(vm::CellSlice& cs) const;
-  
+
   bool print_skip(PrettyPrinter& pp, vm::CellSlice& cs) const override;
   bool print_skip(JsonPrinter& pp, vm::CellSlice& cs) const override;
 };
@@ -1158,13 +1169,9 @@ struct RefAnything final : TLB {
     if (cell_ref.is_null()) {
       return pp.fail("no reference");
     }
-    auto ref_cs = load_cell_slice(cell_ref);
-    vm::CellBuilder cb;
-    vm::cell_builder_add_slice_bool(cb, ref_cs);
-    auto new_cell = cb.finalize();
-    auto boc = vm::std_boc_serialize(new_cell);
+    auto boc = vm::std_boc_serialize(cell_ref);
     if (boc.is_error()) {
-      return pp.fail("failed to serialize cell with reference");
+      return pp.fail("failed to serialize referenced cell");
     }
     auto b64str = td::base64_encode(boc.move_as_ok().as_slice());
     return pp.out(b64str);
