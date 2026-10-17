@@ -9,6 +9,8 @@ target_link_libraries(test-consensus PRIVATE
     tl_api
     ton_validator
     validator
+    validator-common
+    validator-db
 )
 
 add_executable(test-consensus-metrics
@@ -26,5 +28,7 @@ target_link_libraries(test-consensus-metrics PRIVATE
     tl_api
     ton_validator
     validator
+    validator-common
+    validator-db
 )
 ton_test(test-consensus-metrics)

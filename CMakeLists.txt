@@ -706,7 +706,7 @@ add_test(NAME plumtree-graph-sim-simple-smoke COMMAND plumtree-graph-sim --smoke
 add_dependencies(all-tests plumtree-graph-sim)
 add_executable(test-ton-collator test/test-ton-collator.cpp)
 target_link_libraries(test-ton-collator overlay tdutils tdactor adnl tl_api dht
-  validator-disk ton_validator validator-disk )
+  validator-disk ton_validator validator-disk validator-common validator-db )
 
 add_executable(test-http test/test-http.cpp)
 target_link_libraries(test-http PRIVATE tonhttp)

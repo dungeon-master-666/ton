@@ -13,6 +13,8 @@ target_link_libraries(test-ext-message-expiry PRIVATE
     tl_api
     ton_validator
     validator
+    validator-common
+    validator-db
 )
 ton_test(test-ext-message-expiry)
 
@@ -29,5 +31,7 @@ target_link_libraries(test-global-balance-calculator PRIVATE
     tl_api
     ton_validator
     validator
+    validator-common
+    validator-db
 )
 ton_test(test-global-balance-calculator)
